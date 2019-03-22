@@ -39,6 +39,8 @@
  */
 
 
+// a BA protocol as a subprotocol
+
 int main(int argc, char* argv[])
 {
 
