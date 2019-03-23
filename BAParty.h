@@ -5,7 +5,7 @@
 
 #include <libscapi/include/primitives/Matrix.hpp>
 #include <libscapi/include/cryptoInfra/Protocol.hpp>
-#include <libscapi/include/circuits/ArithmeticCircuit.hpp>
+// #include <libscapi/include/circuits/ArithmeticCircuit.hpp>
 #include <libscapi/include/infra/Measurement.hpp>
 #include <vector>
 #include <bitset>
@@ -16,8 +16,8 @@
 #include "ProtocolTimer.h"
 #include <libscapi/include/comm/MPCCommunication.hpp>
 #include <libscapi/include/infra/Common.hpp>
-#include <libscapi/include/primitives/Prg.hpp>
-#include "HashEncrypt.h"
+// #include <libscapi/include/primitives/Prg.hpp>
+// #include "HashEncrypt.h"
 #include <emmintrin.h>
 #include <thread>
 
@@ -53,7 +53,7 @@ bool reconstruct(const vector<FieldType> code, // input
 // -- note: roll my own fault_localization
 // -- note: fault_localization usess both consensus and broadcast
 template <class FieldType>
-class BAParty : public Protocol, HonestMajority, Multipart{
+class BAParty : public Protocol, HonestMajority, MultiParty{
   
 private:
 
@@ -65,7 +65,6 @@ private:
   HIM<FieldType> __peMatrix;
 
   // -------- private functionalities (sub-protocols) --------
-  
   // from Appendex A. in BTH paper:
   // PE_Broadcast (each player spreads 1 value)
   // -- Every party P_i sends x_i to every P_j
@@ -92,6 +91,9 @@ private:
 
 public:
   // -------- public functionalities --------
+  // constructor and destructors
+  BAParty();
+  ~BAParty();
   
   // set protocol properties: (should be known before running!)
   void setParties(const vector<int>& participants);
@@ -112,6 +114,6 @@ public:
   // -- Run BroadcastForP() for k values (1 from each dealer)
   // -- Every player reconstruct T values for each dealer w/ ECC
   void robustBatchBroadcast(vector<FieldType>& elems, bool isDealer);
-}
+};
 
 #endif /* BAPARTY_H_ */
