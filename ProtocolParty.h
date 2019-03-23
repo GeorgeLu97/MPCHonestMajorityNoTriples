@@ -1,4 +1,4 @@
-ifndef PROTOCOLPARTY_H_
+#ifndef PROTOCOLPARTY_H_
 #define PROTOCOLPARTY_H_
 
 #include <stdlib.h>

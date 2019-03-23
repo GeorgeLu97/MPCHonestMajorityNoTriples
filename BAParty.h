@@ -44,8 +44,14 @@ using namespace std::chrono;
 // Function 0: Reconstruct from ECC a polynomial.
 // -- Players run locally.
 template <class FieldType>
-bool reconstruct(const vector<FieldType> code, // input
+bool reconstruct(vector<FieldType>& alpha, // input
+                 vector<FieldType>& code, // input
+                 int degree,
                  vector<FieldType>& polynomial);
+
+template <class FieldType>
+FieldType evalPolynomial(vector<FieldType>& polynomial,
+                         FieldType x);
 
 // Functionality 1: concensus protocol by BGP92
 // Functionality 2: broadcast protocol by CW92
@@ -62,6 +68,7 @@ private:
   int _smallT;
   vector<int> _parties;
   vector<int> _dealers;
+  vector<FieldType> alpha; // <-- the commonly known field element (id) for each party
   HIM<FieldType> __peMatrix;
 
   // -------- private functionalities (sub-protocols) --------
@@ -115,5 +122,136 @@ public:
   // -- Every player reconstruct T values for each dealer w/ ECC
   void robustBatchBroadcast(vector<FieldType>& elems, bool isDealer);
 };
+
+
+
+// ---------------- implementations ----------------
+
+
+
+template <class FieldType>
+FieldType evalPolynomial(vector<FieldType>& polynomial,
+                         FieldType x){
+  int degree = polynomial.size() - 1;
+  // assert(degree >= 0);
+  FieldType result = polynomial[0];
+  FieldType x_value = FieldType(1);
+  for(int i=0; i<degree; i++){
+    x_value *= x;
+    result += polynomial[i+1] * x_value;
+  }
+  
+  return result;
+}
+
+
+
+template <class FieldType>
+void interpolate(vector<FieldType>& x, // input 
+                 vector<FieldType>& y, // input
+                 vector<FieldType>& polynomial){
+
+  // assert(y.size() == x.size());
+  int nPoints = y.size();
+  int degree = nPoints - 1;
+  // polynomial.resize(nPoints);
+  
+  lagrange(x, y, polynomial);
+  
+  return;
+}
+
+
+
+// TODO: do real error correction.
+// -- for now, a stub that interpolate the first T points.
+template <class FieldType>
+bool reconstruct(const vector<FieldType>& alpha, // input x of size n
+                 const vector<FieldType>& code, // input y of size n
+                 int degree, // T-1
+                 vector<FieldType>& polynomial){
+  int nPoints = degree+1;
+  vector<FieldType> x(alpha.begin(), alpha.begin()+nPoints);
+  vector<FieldType> y(code.begin(), code.begin()+nPoints);
+  interpolate(x, y, polynomial);
+
+  return true;
+}
+
+// -------- private functions --------
+template <class FieldType>
+bool BAParty<FieldType>::
+peBroadcast(const FieldType elem, // input
+            vector<FieldType>& received_elems){
+  return true;
+  
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+broadcastForAll(const vector<FieldType>& input_elems, // input
+                vector< vector<FieldType> >& output_elems){
+  return;
+}
+
+// -------- constructor & destructor --------
+// constructor and destructors
+template <class FieldType>
+BAParty<FieldType>::BAParty(){
+}
+
+
+template <class FieldType>
+BAParty<FieldType>::~BAParty(){
+}
+
+
+// -------- public functionalities --------
+// set protocol properties: (should be known before running!)
+template <class FieldType>
+void BAParty<FieldType>::
+setParties(const vector<int>& participants){
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+setDealers(const vector<int>& dealers){
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+remainingParties(vector<int>& participants){
+  return;
+}
+
+// from BGP92: consensus() only on a bit (happiness).
+// -- TODO, fill in design
+template <class FieldType>
+bool BAParty<FieldType>::
+consensus(bool b){
+  return true;
+}
+  
+// from CW92:
+// -- TODO, fill in design
+template <class FieldType>
+void BAParty<FieldType>::
+broadcast(vector<FieldType>& msg, bool isSender){
+  return;
+}
+
+// Broadcast (each dealer (k intotal) spreads T values)
+// -- Every dealer expand T values into n by interpolating
+// -- Every dealer distribute 1 value to each party
+// -- Run BroadcastForP() for k values (1 from each dealer)
+// -- Every player reconstruct T values for each dealer w/ ECC
+template <class FieldType>
+void BAParty<FieldType>::
+robustBatchBroadcast(vector<FieldType>& elems, bool isDealer){
+  return;
+}
+
 
 #endif /* BAPARTY_H_ */
