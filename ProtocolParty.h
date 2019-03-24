@@ -18,6 +18,7 @@
 #include <libscapi/include/infra/Common.hpp>
 #include <libscapi/include/primitives/Prg.hpp>
 #include "HashEncrypt.h"
+#include "BAParty.h"
 // #include <emmintrin.h>
 #include <thread>
 #include <algorithm>
@@ -331,7 +332,6 @@ ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("Perf
     ProtocolTimer p(times, outputTimerFileName);
 
     this->protocolTimer = new ProtocolTimer(times, outputTimerFileName);
-
     vector<string> subTaskNames{"Offline", "preparationPhase", "Online", "inputPhase", "ComputePhase", "outputPhase"};
     timer = new Measurement(*this, subTaskNames);
 
@@ -1412,6 +1412,7 @@ bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vecto
 
 
 template <class FieldType>
+
 bool ProtocolParty<FieldType>::doubleShareRandomVerifyOne(int degree1, int degree2, 
     vector<FieldType>& d1coefficients, vector<FieldType>& d2coefficients, int partyID, 
     vector<vector<vector<vector<byte>>>>& inputs, vector<vector<vector<vector<byte>>>>& outputs) {
@@ -1437,6 +1438,7 @@ bool ProtocolParty<FieldType>::doubleShareRandomVerifyOne(int degree1, int degre
     vector<vector<byte>>& d2sharebytesall1 = outputs[1][partyID];
     vector<vector<byte>>& v1sharebytes1 = outputs[2][partyID];
     vector<vector<byte>>& v2sharebytes1 = outputs[3][partyID];
+
 
     int eltSize = field->getElementSizeInBytes();
     vector<FieldType> d1share;

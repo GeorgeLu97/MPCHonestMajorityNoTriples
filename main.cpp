@@ -67,6 +67,7 @@ int main(int argc, char* argv[])
 
     if(fieldType.compare("ZpMersenne31") == 0)
     {
+
         ProtocolParty<ZpMersenneIntElement> protocol(argc, argv);
         auto t1 = high_resolution_clock::now();
             protocol.run();
@@ -138,6 +139,30 @@ int main(int argc, char* argv[])
         cout << "end main" << '\n';
 
     }
+    /*
+        // testReconstruct<ZpMersenneIntElement>(poly, alph, result);
+      }
+    else if(fieldType.compare("ZpMersenne61") == 0)
+      {
+        // testReconstruct<ZpMersenneLongElement>(poly, alph, result);
+        testReconstruct<ZpMersenneLongElement>(poly, alph, result);
+      }
+    else if(fieldType.compare("ZpKaratsuba") == 0)
+      {
+        // testReconstruct<ZpKaratsubaElement>(poly, alph, result);
+        testReconstruct<ZpKaratsubaElement>(poly, alph, result);
+      }
+    else if(fieldType.compare("GF2m") == 0)
+      {
+        // testReconstruct<GF2E>(poly, alph, result);
+        testReconstruct<GF2E>(poly, alph, result);
+      }
+    else if(fieldType.compare("Zp") == 0)
+      {
+        // testReconstruct<ZZ_p>(poly, alph, result);
+        testReconstruct<ZZ_p>(poly, alph, result);
+      }
+	*/
 
     return 0;
 }
