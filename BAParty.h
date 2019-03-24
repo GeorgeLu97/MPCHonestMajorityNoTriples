@@ -50,8 +50,8 @@ bool reconstruct(vector<FieldType>& alpha, // input
                  vector<FieldType>& polynomial);
 
 template <class FieldType>
-FieldType evalPolynomial(vector<FieldType>& polynomial,
-                         FieldType x);
+FieldType evalPolynomial(FieldType x,
+                         vector<FieldType>& polynomial);
 
 // Functionality 1: concensus protocol by BGP92
 // Functionality 2: broadcast protocol by CW92
@@ -126,12 +126,63 @@ public:
 
 
 // ---------------- implementations ----------------
-
-
+template<class FieldType> 
+void trimZeroes(vector<FieldType>& a) {
+  int i = a.size();
+  FieldType Zero = FieldType(0);
+  while(a[i-1] == Zero && i > 0) { i--; }
+  a.resize(i);
+  return;
+}
 
 template <class FieldType>
-FieldType evalPolynomial(vector<FieldType>& polynomial,
-                         FieldType x){
+void addToPolynomial(vector<FieldType>& p1, // input
+                     vector<FieldType>& p2){ // both input and output
+  // store result in p2
+  int p1_size = p1.size();
+  int p2_size = p2.size();
+  if(p1_size > p2_size){
+    p2.resize( p1_size, FieldType(0) );
+  }
+
+  for(int i=0; i<p1_size; i++){
+    p2[i] += p1[i];
+  }
+  trimZeroes(p2);
+  return;
+}
+
+template <class FieldType>
+void multToPolynomial(vector<FieldType>& p1,
+                      vector<FieldType>& p2){
+
+  int p1_size = p1.size();
+  int p2_size = p2.size();
+  vector<FieldType> tempProduct(p1_size + p2_size - 1, FieldType(0));
+  for(int i=0; i<p1_size; i++){
+    for(int j=0; j<p2_size; j++){
+      tempProduct[i+j] += p1[i] * p2[j];
+    }
+  }
+    
+  trimZeroes(tempProduct);
+  p2 = tempProduct;
+  return;
+}
+
+template <class FieldType>
+void scaleToPolynomial(FieldType c,
+                       vector<FieldType>& p){
+  int p_deg = p.size();
+  for(int i=0; i<p_deg; i++){
+    p[i] *= c;
+  }
+  return;
+}
+
+template <class FieldType>
+FieldType evalPolynomial(FieldType x, 
+                         vector<FieldType>& polynomial){
   int degree = polynomial.size() - 1;
   // assert(degree >= 0);
   FieldType result = polynomial[0];
@@ -144,8 +195,6 @@ FieldType evalPolynomial(vector<FieldType>& polynomial,
   return result;
 }
 
-
-
 template <class FieldType>
 void interpolate(vector<FieldType>& x, // input 
                  vector<FieldType>& y, // input
@@ -154,10 +203,44 @@ void interpolate(vector<FieldType>& x, // input
   // assert(y.size() == x.size());
   int nPoints = y.size();
   int degree = nPoints - 1;
-  // polynomial.resize(nPoints);
+  vector<FieldType> result(nPoints, FieldType(0));
+
+  // ---- O(n^2) to compute all numerators ----
+  vector< vector<FieldType> > numerator_before_i(nPoints);
+  vector< vector<FieldType> > numerator_skip_i(nPoints);
+  // fill-in numerator_before_i from left to right
+  numerator_before_i[0] = vector<FieldType>(1, FieldType(1));
+  for(int i=1; i<nPoints; i++){
+    numerator_before_i[i] = vector<FieldType>( 2, FieldType(1) );
+    numerator_before_i[i][0] = FieldType(0) - x[i-1];
+    multToPolynomial( numerator_before_i[i-1], numerator_before_i[i] );
+  }
+  // fill-in numerator_after_i from right to left
+  numerator_skip_i[nPoints-1] = vector<FieldType>(1, FieldType(1));
+  for(int i=nPoints-2; i>=0; i--){
+    numerator_skip_i[i] = vector<FieldType>(2, FieldType(1));
+    numerator_skip_i[i][0] = FieldType(0) - x[i+1];
+    multToPolynomial( numerator_skip_i[i+1], numerator_skip_i[i] );
+  }
+  // multiply before_i and after_i to get skip_i
+  for(int i=0; i<nPoints; i++){
+    multToPolynomial(numerator_before_i[i], numerator_skip_i[i]);
+  }
   
-  lagrange(x, y, polynomial);
+  // ---- O(n^2) to compute all factors ----
+  vector<FieldType> factor(nPoints);
+  for(int i=0; i<nPoints; i++){
+    FieldType denom = evalPolynomial( x[i], numerator_skip_i[i] );
+    factor[i] = y[i] / denom;
+  }
   
+  // add to get result
+  for(int i=0; i<nPoints; i++){
+    scaleToPolynomial( factor[i], numerator_skip_i[i] );
+    addToPolynomial(numerator_skip_i[i], result);
+  }
+
+  polynomial = result;
   return;
 }
 
@@ -166,13 +249,15 @@ void interpolate(vector<FieldType>& x, // input
 // TODO: do real error correction.
 // -- for now, a stub that interpolate the first T points.
 template <class FieldType>
-bool reconstruct(const vector<FieldType>& alpha, // input x of size n
-                 const vector<FieldType>& code, // input y of size n
+bool reconstruct(vector<FieldType>& alpha, // input x of size n
+                 vector<FieldType>& code, // input y of size n
                  int degree, // T-1
                  vector<FieldType>& polynomial){
   int nPoints = degree+1;
   vector<FieldType> x(alpha.begin(), alpha.begin()+nPoints);
   vector<FieldType> y(code.begin(), code.begin()+nPoints);
+  
+  // TODO: change this
   interpolate(x, y, polynomial);
 
   return true;

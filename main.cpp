@@ -28,18 +28,27 @@ void testReconstruct(const vector<int>& poly,
   // build sample points
   for(int i=0; i<nPoints; i++){
     fieldX[i] = FieldType( alpha[i] );
-    fieldY[i] = evalPolynomial<FieldType>( fieldPoly, fieldX[i] );
+    fieldY[i] = evalPolynomial<FieldType>( fieldX[i], fieldPoly );
     
   }
 
-  // try reconstruction
-  // reconstruct <FieldType> (fieldX, fieldY, nCoeff-1, result);
-
+  // output to check
   cout << "evaluation result:" << endl;
-  
   for(int i=0; i<nPoints; i++){
-    cout << "(" << fieldX[i] << " " << fieldY[i] << ")" << endl;
+    cout << "(" << fieldX[i] << " " << fieldY[i] << ") ";
   }
+  cout << endl;
+
+  // try reconstruction
+  reconstruct <FieldType> (fieldX, fieldY, nCoeff-1, result);
+  
+  cout << "evaluation after reconstruction:" << endl;
+  for(int i=0; i<nPoints; i++){
+    cout << "(" << fieldX[i] << " "
+         << evalPolynomial<FieldType>( fieldX[i], result ) << ") ";
+  }
+  cout << endl;
+  
   return;
 }
 
