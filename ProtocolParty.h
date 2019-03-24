@@ -18,6 +18,7 @@
 #include <libscapi/include/infra/Common.hpp>
 #include <libscapi/include/primitives/Prg.hpp>
 #include "HashEncrypt.h"
+#include "BAParty.h"
 // #include <emmintrin.h>
 #include <thread>
 
@@ -276,7 +277,8 @@ public:
 
 
 template <class FieldType>
-ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("MPCHonestMajorityNoTriples", argc, argv)
+ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[])
+  : Protocol("MPCHonestMajorityNoTriples", argc, argv)
 {
     string circuitFile = this->getParser().getValueByKey(arguments, "circuitFile");
     this->times = stoi(this->getParser().getValueByKey(arguments, "internalIterationsNumber"));
@@ -288,10 +290,12 @@ ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("MPCH
 
     this->protocolTimer = new ProtocolTimer(times, outputTimerFileName);
 
-    vector<string> subTaskNames{"Offline", "preparationPhase", "Online", "inputPhase", "ComputePhase", "VerificationPhase", "outputPhase"};
+    vector<string>
+      subTaskNames{"Offline", "preparationPhase", "Online",
+        "inputPhase", "ComputePhase", "VerificationPhase", "outputPhase"};
     timer = new Measurement(*this, subTaskNames);
 
-    if(fieldType.compare("ZpMersenne") == 0) {
+    if(fieldType.compare("ZpMersenne31") == 0) {
         field = new TemplateField<FieldType>(2147483647);
     } else if(fieldType.compare("ZpMersenne61") == 0) {
         field = new TemplateField<FieldType>(0);
@@ -332,6 +336,7 @@ ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("MPCH
 
     parties = comm.setCommunication(io_service, m_partyId, N, partiesFile);
 
+
     string tmp = "init times";
     //cout<<"before sending any data"<<endl;
     byte tmpBytes[20];
@@ -345,9 +350,8 @@ ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("MPCH
         }
     }
 
-
-    readMyInputs();
-
+    // readMyInputs();
+    
     auto t1 = high_resolution_clock::now();
     initializationPhase(/*matrix_him, matrix_vand, m*/);
 
@@ -382,24 +386,37 @@ void ProtocolParty<FieldType>::readMyInputs()
 template <class FieldType>
 void ProtocolParty<FieldType>::run() {
 
-    for (iteration=0; iteration<times; iteration++){
+    // for (iteration=0; iteration<times; iteration++){
 
-        auto t1start = high_resolution_clock::now();
-        timer->startSubTask("Offline", iteration);
-        runOffline();
-        timer->endSubTask("Offline", iteration);
-        timer->startSubTask("Online", iteration);
-        runOnline();
-        timer->endSubTask("Online", iteration);
+    //     auto t1start = high_resolution_clock::now();
+    //     timer->startSubTask("Offline", iteration);
+    //     runOffline();
+    //     timer->endSubTask("Offline", iteration);
+    //     timer->startSubTask("Online", iteration);
+    //     runOnline();
+    //     timer->endSubTask("Online", iteration);
 
-        auto t2end = high_resolution_clock::now();
-        auto duration = duration_cast<milliseconds>(t2end-t1start).count();
-        protocolTimer->totalTimeArr[iteration] = duration;
+    //     auto t2end = high_resolution_clock::now();
+    //     auto duration = duration_cast<milliseconds>(t2end-t1start).count();
+    //     protocolTimer->totalTimeArr[iteration] = duration;
 
-        cout << "time in milliseconds for protocol: " << duration << endl;
-    }
+    //     cout << "time in milliseconds for protocol: " << duration << endl;
+    // }
+  
+  cout << "================= test BA ===================" << endl;
+  BAParty<FieldType> BA;
+  BA.setParties(parties, m_partyId);
+  
+  // not interesting for now, just a sanity check
+  BA.setHIM(matrix_him);
+  BA.setAlphaBeta(alpha, alpha);
+  BA.setDealers(vector<int>(1, 0));
+  BA.setSmallT(T);
 
-
+  // test consensus() - in progress
+  BA.setNumThreads(2);
+  BA.consensus( m_partyId % 3 == 0 );
+  return;
 }
 
 template <class FieldType>
@@ -968,18 +985,23 @@ void ProtocolParty<FieldType>::generateRandom2TAndTShares(int numOfRandomPairs, 
 template <class FieldType>
 void ProtocolParty<FieldType>::initializationPhase()
 {
+
+    
     bigR.resize(1);
     beta.resize(1);
     y_for_interpolate.resize(N);
-    gateShareArr.resize((M - circuit.getNrOfOutputGates())*2); // my share of the gate (for all gates)
+    // gateShareArr.resize((M - circuit.getNrOfOutputGates())*2); // my share of the gate (for all gates)
     alpha.resize(N); // N distinct non-zero field elements
     vector<FieldType> alpha1(N-T);
     vector<FieldType> alpha2(T);
 
     beta[0] = field->GetElement(0); // zero of the field
+
     matrix_for_interpolate.allocate(1,N, field);
 
 
+
+    
     matrix_him.allocate(N,N,field);
     matrix_vand.allocate(N,N,field);
     matrix_vand_transpose.allocate(N,N,field);

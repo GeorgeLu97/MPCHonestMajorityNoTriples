@@ -33,11 +33,12 @@ using namespace std::chrono;
 // Questions:
 // 1. Is ``run in parallel'' different from ``run in batch''?
 //    -- for now, run in sequence.
-// 2. Error checking during protocol
+// 2. Error checking during protocol (e.g. timeout communication?)
+// 3. How to agree on a constant HIM matrix?
+// 4. send byte instead of bits?
 
 // TODO:
-// 1. look into Vandermonde matrix for ECC (VDM class?)
-// 2. read consensus and broadcast papers
+// 2. read broadcast papers
 // 3. Error Correction (reconstrcut)
 // 4. fault_localization. (store messages/ simulate party interactions)
 
@@ -59,17 +60,25 @@ FieldType evalPolynomial(FieldType x,
 // -- note: roll my own fault_localization
 // -- note: fault_localization usess both consensus and broadcast
 template <class FieldType>
-class BAParty : public Protocol, HonestMajority, MultiParty{
+class BAParty{
   
 private:
 
   // -------- protocol properties --------
-  int _myId;
-  int _smallT;
-  vector<int> _parties;
-  vector<int> _dealers;
-  vector<FieldType> alpha; // <-- the commonly known field element (id) for each party
-  HIM<FieldType> __peMatrix;
+  int _myId;                    // my party id
+  int _smallT;                  // number of assumed adversaries
+  int _nThread;
+  vector<bool> _dealersMask;    // mask to dealers
+  vector<bool> _activeMask;     // mask to active players
+  vector< shared_ptr<ProtocolPartyData> > _partySocket; // for communication
+  vector<FieldType> _alpha; // <-- the commonly known elements to all
+  vector<FieldType> _beta;  //     ..one for each party
+  HIM<FieldType> _peMatrix; // common HIM matrix for PE_Broadcast
+  
+  // -------- private helper functions --------
+  void exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
+                         int threadID, int nThreads);
+  void exchangeBit(bool sendBit, vector<bool>& recvBits);
 
   // -------- private functionalities (sub-protocols) --------
   // from Appendex A. in BTH paper:
@@ -97,18 +106,23 @@ private:
                        vector< vector<FieldType> >& output_elems);
 
 public:
-  // -------- public functionalities --------
   // constructor and destructors
   BAParty();
   ~BAParty();
   
   // set protocol properties: (should be known before running!)
-  void setParties(const vector<int>& participants);
+  // TODO: change depending on how outter protocol is implemented (ask George)
+  void setParties(vector< shared_ptr<ProtocolPartyData> >& parties, int myId);
+  void setHIM(HIM<FieldType>& common_HIM);
+  void setAlphaBeta(vector<FieldType>& alpha, vector<FieldType>& beta);
   void setDealers(const vector<int>& dealers);
-  void remainingParties(vector<int>& participants);
+  void setSmallT(int smallT);
+  void setNumThreads(int numThreads);
+  void getRemainingParties(vector< shared_ptr<ProtocolPartyData> >& parties);
 
+
+  // -------- public functionalities --------
   // from BGP92: consensus() only on a bit (happiness).
-  // -- TODO, fill in design
   bool consensus(bool b);
   
   // from CW92:
@@ -234,7 +248,7 @@ void interpolate(vector<FieldType>& x, // input
     factor[i] = y[i] / denom;
   }
   
-  // add to get result
+  // ---- O(n^2) add to get result ----
   for(int i=0; i<nPoints; i++){
     scaleToPolynomial( factor[i], numerator_skip_i[i] );
     addToPolynomial(numerator_skip_i[i], result);
@@ -285,7 +299,6 @@ template <class FieldType>
 BAParty<FieldType>::BAParty(){
 }
 
-
 template <class FieldType>
 BAParty<FieldType>::~BAParty(){
 }
@@ -295,27 +308,167 @@ BAParty<FieldType>::~BAParty(){
 // set protocol properties: (should be known before running!)
 template <class FieldType>
 void BAParty<FieldType>::
-setParties(const vector<int>& participants){
+setParties(vector< shared_ptr<ProtocolPartyData> >& parties, int myId){
+  int nParties = parties.size();
+  _partySocket = parties;
+  _myId = myId;
+  // calculate defult number of advarseries
+  _smallT = (nParties -1) / 3;
+  // set default masks
+  _dealersMask.clear();
+  _dealersMask.resize(nParties, false);
+  _activeMask.clear();
+  _activeMask.resize(nParties, true);
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+setHIM(HIM<FieldType>& common_HIM){
+  _peMatrix = common_HIM;
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+setAlphaBeta(vector<FieldType>& alpha, vector<FieldType>& beta){
+  // assert(alpha.size() == _partySocket.size());
+  // assert(beta.size() == _partySocket.size());
+  _alpha = alpha;
+  _beta = beta;
   return;
 }
 
 template <class FieldType>
 void BAParty<FieldType>::
 setDealers(const vector<int>& dealers){
+  _dealersMask.clear();
+  _dealersMask.resize( _partySocket.size(), false );
+  for(auto d : dealers){
+    // assert(d < _partySocket.size());
+    _dealersMask[d] = true;
+  }
   return;
 }
 
 template <class FieldType>
 void BAParty<FieldType>::
-remainingParties(vector<int>& participants){
+setSmallT(int smallT){
+  // assert( smallT < (_partySocket.size() -1) / 3 );
+  _smallT = smallT;
   return;
 }
 
+template <class FieldType>
+void BAParty<FieldType>::
+setNumThreads(int numThreads){
+  _nThread = numThreads;
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+getRemainingParties(vector< shared_ptr<ProtocolPartyData> >& parties){
+  int nParties = _partySocket.size();
+  int nActive = 0;
+  vector< shared_ptr<ProtocolPartyData> > activeParties(nParties);
+  for(int i=0; i<nParties; i++){
+    if(_activeMask[i]){
+      activeParties[nActive++] = _partySocket[i];
+    }
+  }
+  activeParties.resize(nActive);
+  parties = activeParties;
+  return;
+}
+
+
+// thread worker function
+template <class FieldType>
+void BAParty<FieldType>::
+exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
+                  int threadId, int nThreads){
+
+  int nParties = _partySocket.size();
+  char sendByte = sendBit ? 1 : 0;
+  vector<char> recvBytes(nParties);
+
+  // communicate with other parties
+  for(int i=threadId; i<nParties; i+=nThreads){
+    if(!_activeMask[i]){
+      // skip inactive (eliminated) parties
+      continue;
+    }
+    
+    if( _myId < _partySocket[i]->getID() ){
+      // write before read
+      _partySocket[i]->getChannel()->write((byte*) &sendByte, 1 );
+      _partySocket[i]->getChannel()->read((byte*) &(recvBytes[i]), 1 );
+    }else{
+      // read before write
+      _partySocket[i]->getChannel()->read((byte*) &(recvBytes[i]), 1 );
+      _partySocket[i]->getChannel()->write((byte*) &sendByte, 1 );
+    }
+  }
+
+  // convert messages into bits
+  for(int i=threadId; i<nParties; i+=nThreads){
+    if(!_activeMask[i]){
+      continue;
+    }
+    recvBits[i] = (recvBytes[i] == 1);
+  }
+  
+  return;
+}
+
+
+template <class FieldType>
+void BAParty<FieldType>::
+exchangeBit(bool sendBit, vector<bool>& recvBits){
+
+  vector<thread> threads(_nThread);
+  for(int i=0; i<_nThread; i++){
+    threads[i] = thread(&BAParty::exchangeBitWorker, this,
+                        sendBit, ref(recvBits), i, _nThread);
+  }
+
+  for(int i=0; i<_nThread; i++){
+    threads[i].join();
+  }
+  return;
+}
+
+
 // from BGP92: consensus() only on a bit (happiness).
-// -- TODO, fill in design
+// -- TODO: replace with optimized result. (``Phase King'' for now)
+// -- Repeat t+1 times, each time pick a different player as king.
+// -- Every player sends its bit b
+// -- Every player counts the number of 1s and 0s received
+// -- Every player sends two bits: (count_1 >= n-t), and (count_0 >= n-t)
+// -- Every player counts the number of ``true''s for 1 and 0.
+// -- Every player set its bit to (count_true_1 > t)
+// -- King sends to all: its bit.
+// -- Every player set its bit to King's, except when (count_true_b > n-t)
 template <class FieldType>
 bool BAParty<FieldType>::
 consensus(bool b){
+  
+  int nRounds = _smallT + 1;
+  int nParties = _partySocket.size();
+  for(int i=0; i<nRounds; i++){
+    vector<bool> receivedBits(nParties);
+    // first universal excange round.
+    exchangeBit(b, receivedBits);
+
+    cout << "my (" << _myId << ") view: " << endl;
+    for(int j=0; j<nParties; j++){
+      cout << "p" << _partySocket[j]->getID()
+           << " isActive == " << _activeMask[j] << "; ";
+      cout << "bj = " << receivedBits[j] << endl;
+    }
+  }
+  
   return true;
 }
   
