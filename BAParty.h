@@ -36,6 +36,7 @@ using namespace std::chrono;
 // 2. Error checking during protocol (e.g. timeout communication?)
 // 3. How to agree on a constant HIM matrix?
 // 4. send byte instead of bits?
+// 5. count ``received bits'' includes my own bit?
 
 // TODO:
 // 2. read broadcast papers
@@ -79,6 +80,9 @@ private:
   void exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
                          int threadID, int nThreads);
   void exchangeBit(bool sendBit, vector<bool>& recvBits);
+  void broadcastBitWorker(bool sendBit,
+                          int threadId, int nThreads);
+  bool broadcastBit(bool sendBit, int kingId);
 
   // -------- private functionalities (sub-protocols) --------
   // from Appendex A. in BTH paper:
@@ -313,7 +317,7 @@ setParties(vector< shared_ptr<ProtocolPartyData> >& parties, int myId){
   _partySocket = parties;
   _myId = myId;
   // calculate defult number of advarseries
-  _smallT = (nParties -1) / 3;
+  _smallT = nParties / 3;
   // set default masks
   _dealersMask.clear();
   _dealersMask.resize(nParties, false);
@@ -439,9 +443,59 @@ exchangeBit(bool sendBit, vector<bool>& recvBits){
   return;
 }
 
+template <class FieldType>
+void BAParty<FieldType>::
+broadcastBitWorker(bool sendBit,
+                   int threadId, int nThreads){
+
+  int nParties = _partySocket.size();
+  char sendByte = sendBit ? 1 : 0;
+
+  // communicate with other parties
+  for(int i=threadId; i<nParties; i+=nThreads){
+    if(!_activeMask[i]){
+      // skip inactive (eliminated) parties
+      continue;
+    }
+    _partySocket[i]->getChannel()->write((byte*) &sendByte, 1 );
+  }
+  return;
+}
+
+template <class FieldType>
+bool BAParty<FieldType>::
+broadcastBit(bool sendBit, int kingId){
+  int nParties = _partySocket.size();
+  if(_myId == kingId){
+    // king: send to everyone
+    vector<thread> threads(_nThread);
+    for(int i=0; i<_nThread; i++){
+      threads[i] = thread(&BAParty::broadcastBitWorker, this,
+                          sendBit, i, _nThread);
+    }
+
+    for(int i=0; i<_nThread; i++){
+      threads[i].join();
+    }
+    return sendBit;
+  }else{
+    // rest: ignore sendBit. Receive from king
+    char recvByte;
+    for(int i=0; i<nParties; i++){
+      if(_activeMask[i] && _partySocket[i]->getID() == kingId){
+        _partySocket[i]->getChannel()->read((byte*) &recvByte, 1);
+      }
+    }
+    return (recvByte == 1);
+  }
+  
+}
+
+
 
 // from BGP92: consensus() only on a bit (happiness).
 // -- TODO: replace with optimized result. (``Phase King'' for now)
+// -- TODO: or optimize ``Phase King'' more
 // -- Repeat t+1 times, each time pick a different player as king.
 // -- Every player sends its bit b
 // -- Every player counts the number of 1s and 0s received
@@ -457,19 +511,40 @@ consensus(bool b){
   int nRounds = _smallT + 1;
   int nParties = _partySocket.size();
   for(int i=0; i<nRounds; i++){
+    bool isKing = (i == _myId);
     vector<bool> receivedBits(nParties);
+    vector<bool> receivedBits2(nParties);
+    int C[] = {0, 0};
+    int D[] = {0, 0};
+
     // first universal excange round.
     exchangeBit(b, receivedBits);
-
-    cout << "my (" << _myId << ") view: " << endl;
     for(int j=0; j<nParties; j++){
-      cout << "p" << _partySocket[j]->getID()
-           << " isActive == " << _activeMask[j] << "; ";
-      cout << "bj = " << receivedBits[j] << endl;
+      if(_activeMask[j]){
+        C[0] += ( !receivedBits[j] ); // bit == false(0)
+        C[1] += ( receivedBits[j] );  // bit == true(1) 
+      }
     }
+    // second universal exchange round
+    exchangeBit(C[0] >= (nParties - _smallT), receivedBits);
+    exchangeBit(C[1] >= (nParties - _smallT), receivedBits2);
+    for(int j=0; j<nParties; j++){
+      if(_activeMask[j]){
+        D[0] += (receivedBits[j]);
+        D[1] += (receivedBits2[j]);
+      }
+    }
+    b = D[1] > _smallT;
+
+    // last king broadcast round
+    bool newb = broadcastBit(b, i);
+    if(!isKing){
+      int nSamePlayers = b ? D[1] : D[0];
+      b = (nSamePlayers < nParties - _smallT) ? newb : b;
+    }// else b == newb. do nothing
   }
   
-  return true;
+  return b;
 }
   
 // from CW92:
