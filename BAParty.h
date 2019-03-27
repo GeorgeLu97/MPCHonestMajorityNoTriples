@@ -33,13 +33,14 @@ using namespace std::chrono;
 // Questions:
 // 1. Is ``run in parallel'' different from ``run in batch''?
 //    -- for now, run in sequence.
-// 2. Error checking during protocol (e.g. timeout communication?)
-// 3. How to agree on a constant HIM matrix?
-// 4. send byte instead of bits?
-// 5. count ``received bits'' includes my own bit?
+// 2. Recursive Phase King, using Phase King as base?
+//    -- if we only need O(n^2) bits, and O(n) round, then its fine.
+// 3. Error checking during protocol (e.g. timeout communication?)
+// 4. How to agree on a constant HIM matrix?
+// 5. send byte instead of bits?
+// 6. count ``received bits'' includes my own bit?
 
 // TODO:
-// 2. read broadcast papers
 // 3. Error Correction (reconstrcut)
 // 4. fault_localization. (store messages/ simulate party interactions)
 
@@ -67,8 +68,9 @@ private:
 
   // -------- protocol properties --------
   int _myId;                    // my party id
-  int _smallT;                  // number of assumed adversaries
   int _nThread;
+  int _basePartyCount = 3;
+  int _nActiveParties;
   vector<bool> _dealersMask;    // mask to dealers
   vector<bool> _activeMask;     // mask to active players
   vector< shared_ptr<ProtocolPartyData> > _partySocket; // for communication
@@ -83,6 +85,13 @@ private:
   void broadcastBitWorker(bool sendBit,
                           int threadId, int nThreads);
   bool broadcastBit(bool sendBit, int kingId);
+  bool universal_rounds(bool b, int* D,
+                        vector<bool>& buffer, vector<bool>& buffer2);
+  int split_commitee(vector<char>& commitee_mask, int* QCount);
+  void map_my_commitee(const vector<char>& commitee_mask,
+                       const int* QCount, int myCommitee);
+  void unmap_my_commitee(const vector<char>& commitee_mask,
+                         const int* QCount, int myCommitee);
 
   // -------- private functionalities (sub-protocols) --------
   // from Appendex A. in BTH paper:
@@ -120,13 +129,13 @@ public:
   void setHIM(HIM<FieldType>& common_HIM);
   void setAlphaBeta(vector<FieldType>& alpha, vector<FieldType>& beta);
   void setDealers(const vector<int>& dealers);
-  void setSmallT(int smallT);
   void setNumThreads(int numThreads);
   void getRemainingParties(vector< shared_ptr<ProtocolPartyData> >& parties);
 
 
   // -------- public functionalities --------
   // from BGP92: consensus() only on a bit (happiness).
+  bool consensus_base(bool b);
   bool consensus(bool b);
   
   // from CW92:
@@ -317,12 +326,13 @@ setParties(vector< shared_ptr<ProtocolPartyData> >& parties, int myId){
   _partySocket = parties;
   _myId = myId;
   // calculate defult number of advarseries
-  _smallT = nParties / 3;
+  
   // set default masks
   _dealersMask.clear();
   _dealersMask.resize(nParties, false);
   _activeMask.clear();
   _activeMask.resize(nParties, true);
+  _nActiveParties = nParties +1; // counting myself
   return;
 }
 
@@ -352,14 +362,6 @@ setDealers(const vector<int>& dealers){
     // assert(d < _partySocket.size());
     _dealersMask[d] = true;
   }
-  return;
-}
-
-template <class FieldType>
-void BAParty<FieldType>::
-setSmallT(int smallT){
-  // assert( smallT < (_partySocket.size() -1) / 3 );
-  _smallT = smallT;
   return;
 }
 
@@ -493,9 +495,7 @@ broadcastBit(bool sendBit, int kingId){
 
 
 
-// from BGP92: consensus() only on a bit (happiness).
-// -- TODO: replace with optimized result. (``Phase King'' for now)
-// -- TODO: or optimize ``Phase King'' more
+// from BGP92: Phase King 
 // -- Repeat t+1 times, each time pick a different player as king.
 // -- Every player sends its bit b
 // -- Every player counts the number of 1s and 0s received
@@ -506,46 +506,172 @@ broadcastBit(bool sendBit, int kingId){
 // -- Every player set its bit to King's, except when (count_true_b > n-t)
 template <class FieldType>
 bool BAParty<FieldType>::
-consensus(bool b){
-  
-  int nRounds = _smallT + 1;
+universal_rounds(bool b, int* D,
+                 vector<bool>& buffer, vector<bool>& buffer2){
+  int smallT = (_nActiveParties-1) /3;
   int nParties = _partySocket.size();
+  int C[] = {0, 0};
+
+  // first universal excange round.
+  exchangeBit(b, buffer);
+  for(int j=0; j<nParties; j++){
+    if(_activeMask[j]){
+      C[0] += ( !buffer[j] ); // bit == false(0)
+      C[1] += ( buffer[j] );  // bit == true(1) 
+    }
+  }
+  // second universal exchange round
+  exchangeBit(C[0] >= (_nActiveParties - smallT), buffer);
+  exchangeBit(C[1] >= (_nActiveParties - smallT), buffer2);
+  for(int j=0; j<nParties; j++){
+    if(_activeMask[j]){
+      D[0] += (buffer[j]);
+      D[1] += (buffer2[j]);
+    }
+  }
+  return (D[1] > smallT);
+}
+
+
+template <class FieldType>
+bool BAParty<FieldType>::
+consensus_base(bool b){
+  int smallT = (_nActiveParties-1) /3;
+  int nRounds = smallT + 1;
+  int nParties = _partySocket.size();
+  int kingId = 0;
+  int D[] = {0, 0};
+  vector<bool> receivedBits(nParties);
+  vector<bool> receivedBits2(nParties);
   for(int i=0; i<nRounds; i++){
-    bool isKing = (i == _myId);
-    vector<bool> receivedBits(nParties);
-    vector<bool> receivedBits2(nParties);
-    int C[] = {0, 0};
-    int D[] = {0, 0};
+    // skip to next active party
+    while( !_activeMask[kingId] ){ kingId++; }
+    bool isKing = (kingId == _myId);
 
-    // first universal excange round.
-    exchangeBit(b, receivedBits);
-    for(int j=0; j<nParties; j++){
-      if(_activeMask[j]){
-        C[0] += ( !receivedBits[j] ); // bit == false(0)
-        C[1] += ( receivedBits[j] );  // bit == true(1) 
-      }
-    }
-    // second universal exchange round
-    exchangeBit(C[0] >= (nParties - _smallT), receivedBits);
-    exchangeBit(C[1] >= (nParties - _smallT), receivedBits2);
-    for(int j=0; j<nParties; j++){
-      if(_activeMask[j]){
-        D[0] += (receivedBits[j]);
-        D[1] += (receivedBits2[j]);
-      }
-    }
-    b = D[1] > _smallT;
-
+    // the two universal rounds
+    b = universal_rounds(b, D, receivedBits, receivedBits2);
+  
     // last king broadcast round
-    bool newb = broadcastBit(b, i);
+    bool newb = broadcastBit(b, kingId);
     if(!isKing){
       int nSamePlayers = b ? D[1] : D[0];
-      b = (nSamePlayers < nParties - _smallT) ? newb : b;
+      b = (nSamePlayers < _nActiveParties - smallT) ? newb : b;
     }// else b == newb. do nothing
   }
   
   return b;
 }
+
+template <class FieldType>
+int BAParty<FieldType>::
+split_commitee(vector<char>& commitee_mask, int* QCount){
+  int curCommitee = 0;
+  int myCommitee; // <-- to be set in the loop
+  int nParties = _partySocket.size();
+  bool firstGreater = true;
+  for(int i=0; i<nParties; i++){
+    if(!_activeMask[i]){
+      continue;
+    }
+    if( _myId < _partySocket[i]->getID() && firstGreater){
+      // just went past myself!
+      myCommitee = curCommitee;
+      QCount[curCommitee]++;
+      curCommitee = 1-curCommitee;
+      firstGreater = false;
+    }
+    commitee_mask[i]= curCommitee;
+    QCount[curCommitee]++;
+    curCommitee = 1-curCommitee;
+  }
+
+  return myCommitee;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+map_my_commitee(const vector<char>& commitee_mask,
+                const int* QCount, int myCommitee){
+  int nParties = _partySocket.size();
+  for(int i=0; i<nParties; i++){
+    if(commitee_mask[i] == 1-myCommitee){
+      _activeMask[i] = false;
+    }
+  }
+  _nActiveParties -= QCount[1-myCommitee];
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+unmap_my_commitee(const vector<char>& commitee_mask,
+                  const int* QCount, int myCommitee){
+  int nParties = _partySocket.size();
+  for(int i=0; i<nParties; i++){
+    if(commitee_mask[i] == 1-myCommitee){
+      _activeMask[i] = true;
+    }
+  }
+  _nActiveParties += QCount[1-myCommitee];  
+  return;
+}
+
+
+// from BGP92: Recursive Phase King (RPK)
+// -- with Phase King as base
+// -- NOTE: assume 'parties' array is in ID order
+template <class FieldType>
+bool BAParty<FieldType>::
+consensus(bool b){
+  int sizeQw = _nActiveParties;
+  // base case
+  if(sizeQw <= _basePartyCount){
+    return consensus_base(b);
+  }
+
+  int nParties = _partySocket.size();
+  int QCount[] = {0, 0};
+  int D[] = {0, 0};
+  int tw = (sizeQw -1) /3;
+  
+  // active parties = current commitee
+  // -- further divide into 2 committes, marked 1 or 0. Others marked as 2
+  // -- divide commitees by consecutive active members
+  vector<char> commitee_mask(nParties, 2);
+  int myCommitee = split_commitee(commitee_mask, QCount);
+  
+  // actual protocol
+  vector<bool> receivedBits(nParties);
+  vector<bool> receivedBits2(nParties);
+  bool newb;
+  for(int k=0; k<2; k++){
+    // the two universal rounds
+    b = universal_rounds(b, D, receivedBits, receivedBits2);
+
+    if(myCommitee == k){
+      // if it's my commitee's turn
+      // -- set the other commitee to in-active
+      // -- recurse, with only my commitee being active
+      // -- reset the other commitee to active
+      map_my_commitee(commitee_mask, QCount, myCommitee);
+      newb = consensus(b);
+      unmap_my_commitee(commitee_mask, QCount, myCommitee);
+      
+      // TODO <<<<<<<<<<<<<< send newb to the other commitee!
+      
+    }else{
+      // if not my commitee's turn
+      // -- TODO receive from the other commitee!
+      // -- TODO count most frequent value as newb
+    }
+
+    if(D[b] < _nActiveParties - tw){
+      b = newb;
+    }
+  }
+  return b;
+}
+
   
 // from CW92:
 // -- TODO, fill in design
