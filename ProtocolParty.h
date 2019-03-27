@@ -411,11 +411,11 @@ void ProtocolParty<FieldType>::run() {
   BA.setHIM(matrix_him);
   BA.setAlphaBeta(alpha, alpha);
   BA.setDealers(vector<int>(1, 0));
-  // BA.setSmallT(T);
+  //BA.setSmallT(T);
 
   // test consensus() - in progress
   BA.setNumThreads(2);
-  bool result = BA.consensus( m_partyId % 2 == 0 );
+  bool result = BA.consensus_base( m_partyId % 2 == 0 );
   // bool result = BA.consensus(true);
   cout << "p" << m_partyId << ": consensus result is " << result << endl;
   return;
