@@ -82,16 +82,22 @@ private:
   void exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
                          int threadID, int nThreads);
   void exchangeBit(bool sendBit, vector<bool>& recvBits);
-  void broadcastBitWorker(bool sendBit,
-                          int threadId, int nThreads);
+  
+  void broadcastBitWorker(bool sendBit, int threadId, int nThreads);
+  void gatherBitWorker(vector<bool>& sendBit, int threadId, int nThreads);
   bool broadcastBit(bool sendBit, int kingId);
   bool universal_rounds(bool b, int* D,
                         vector<bool>& buffer, vector<bool>& buffer2);
+  
   int split_commitee(vector<char>& commitee_mask, int* QCount);
-  void map_my_commitee(const vector<char>& commitee_mask,
-                       const int* QCount, int myCommitee);
-  void unmap_my_commitee(const vector<char>& commitee_mask,
-                         const int* QCount, int myCommitee);
+  void map_commitee(const vector<char>& commitee_mask, const int* QCount,
+                    int myCommitee);
+  void unmap_commitee(const vector<char>& commitee_mask, const int* QCount,
+                      int myCommitee);
+  void commiteeSendBit(const vector<char>& commitee_mask, const int* QCount,
+                       int myCommitee, bool newb);
+  void commiteeRecvBits(const vector<char>& commitee_mask, const int* QCount,
+                        int myCommitee, vector<bool>& receivedBits);
 
   // -------- private functionalities (sub-protocols) --------
   // from Appendex A. in BTH paper:
@@ -445,6 +451,7 @@ exchangeBit(bool sendBit, vector<bool>& recvBits){
   return;
 }
 
+// send bit to all active parties
 template <class FieldType>
 void BAParty<FieldType>::
 broadcastBitWorker(bool sendBit,
@@ -460,6 +467,33 @@ broadcastBitWorker(bool sendBit,
       continue;
     }
     _partySocket[i]->getChannel()->write((byte*) &sendByte, 1 );
+  }
+  return;
+}
+
+// gather bit from all active parties
+template <class FieldType>
+void BAParty<FieldType>::
+gatherBitWorker(vector<bool>& recvBits,
+                int threadId, int nThreads){
+
+  int nParties = _partySocket.size();
+  vector<char> recvBytes(nParties);
+  // communicate with other parties
+  for(int i=threadId; i<nParties; i+=nThreads){
+    if(!_activeMask[i]){
+      // skip inactive (eliminated) parties
+      continue;
+    }
+    _partySocket[i]->getChannel()->read((byte*) &(recvBytes[i]), 1 );
+  }
+
+  // convert messages into bits
+  for(int i=threadId; i<nParties; i+=nThreads){
+    if(!_activeMask[i]){
+      continue;
+    }
+    recvBits[i] = (recvBytes[i] == 1);
   }
   return;
 }
@@ -493,6 +527,48 @@ broadcastBit(bool sendBit, int kingId){
   
 }
 
+
+template <class FieldType>
+void BAParty<FieldType>::
+commiteeSendBit(const vector<char>& commitee_mask, const int* QCount,
+                int myCommitee, bool sendBit){
+  // Send to all of the other commitee
+  // -- set my commitee to in-active
+  // -- broad cast to all active parties
+  // -- reset my commitee to active
+  map_commitee(commitee_mask, QCount, 1-myCommitee);
+  vector<thread> threads(_nThread);
+  for(int i=0; i<_nThread; i++){
+    threads[i] = thread(&BAParty::broadcastBitWorker, this,
+                        sendBit, i, _nThread);
+  }
+  for(int i=0; i<_nThread; i++){
+    threads[i].join();
+  }
+  unmap_commitee(commitee_mask, QCount, 1-myCommitee);
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+commiteeRecvBits(const vector<char>& commitee_mask, const int* QCount,
+                 int myCommitee, vector<bool>& buffer){
+  // Recv from all of the other commitee
+  // -- set my commitee to in-active
+  // -- recv from all active parties
+  // -- reset my commitee to active
+  map_commitee(commitee_mask, QCount, 1-myCommitee);
+  vector<thread> threads(_nThread);
+  for(int i=0; i<_nThread; i++){
+    threads[i] = thread(&BAParty::gatherBitWorker, this,
+                        ref(buffer), i, _nThread);
+  }
+  for(int i=0; i<_nThread; i++){
+    threads[i].join();
+  }
+  unmap_commitee(commitee_mask, QCount, 1-myCommitee);
+  return;
+}
 
 
 // from BGP92: Phase King 
@@ -590,7 +666,7 @@ split_commitee(vector<char>& commitee_mask, int* QCount){
 
 template <class FieldType>
 void BAParty<FieldType>::
-map_my_commitee(const vector<char>& commitee_mask,
+map_commitee(const vector<char>& commitee_mask,
                 const int* QCount, int myCommitee){
   int nParties = _partySocket.size();
   for(int i=0; i<nParties; i++){
@@ -604,7 +680,7 @@ map_my_commitee(const vector<char>& commitee_mask,
 
 template <class FieldType>
 void BAParty<FieldType>::
-unmap_my_commitee(const vector<char>& commitee_mask,
+unmap_commitee(const vector<char>& commitee_mask,
                   const int* QCount, int myCommitee){
   int nParties = _partySocket.size();
   for(int i=0; i<nParties; i++){
@@ -653,16 +729,25 @@ consensus(bool b){
       // -- set the other commitee to in-active
       // -- recurse, with only my commitee being active
       // -- reset the other commitee to active
-      map_my_commitee(commitee_mask, QCount, myCommitee);
+      map_commitee(commitee_mask, QCount, myCommitee);
       newb = consensus(b);
-      unmap_my_commitee(commitee_mask, QCount, myCommitee);
-      
-      // TODO <<<<<<<<<<<<<< send newb to the other commitee!
-      
+      unmap_commitee(commitee_mask, QCount, myCommitee);
+
+      // Then, send to all of the other commitee
+      commiteeSendBit(commitee_mask, QCount, myCommitee, newb);
     }else{
       // if not my commitee's turn
-      // -- TODO receive from the other commitee!
-      // -- TODO count most frequent value as newb
+      // -- receive from the other commitee!
+      // -- count most frequent value as newb
+      commiteeRecvBits(commitee_mask, QCount, myCommitee, receivedBits);
+      int tmpCount[] = {0, 0};
+      for(int i=0; i<nParties; i++){
+        if(commitee_mask[i] == 1-myCommitee){
+          tmpCount[0] += (!receivedBits[i]) ? 1 : 0;
+          tmpCount[1] += receivedBits[i] ? 1 : 0;
+        }
+      }
+      newb = (tmpCount[1] > tmpCount[0]) ? 1 : 0;
     }
 
     if(D[b] < _nActiveParties - tw){
