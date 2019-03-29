@@ -416,7 +416,7 @@ void ProtocolParty<FieldType>::run() {
   // test consensus() - in progress
   BA.setNumThreads(2);
   // bool result = BA.consensus_base( m_partyId % 2 == 0 );
-  bool result = BA.consensus(m_partyId % 2 == 0 );
+  bool result = BA.consensus(true);
   cout << "p" << m_partyId << ": consensus result is " << result << endl;
   return;
 }
