@@ -79,20 +79,25 @@ private:
   HIM<FieldType> _peMatrix; // common HIM matrix for PE_Broadcast
   
   // -------- private helper functions --------
+  // used for debugging
+  void printActiveParties();
+  void printCommitee(vector<char>& commitee_mask, int myCommitee);
+
+  // used in base Phase King
   void exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
                          int threadID, int nThreads);
   void exchangeBit(bool sendBit, vector<bool>& recvBits);
-  
   void broadcastBitWorker(bool sendBit, int threadId, int nThreads);
   void gatherBitWorker(vector<bool>& sendBit, int threadId, int nThreads);
   bool broadcastBit(bool sendBit, int kingId);
   bool universal_rounds(bool b, int* D,
                         vector<bool>& buffer, vector<bool>& buffer2);
-  
-  int split_commitee(vector<char>& commitee_mask, int* QCount);
-  void map_commitee(const vector<char>& commitee_mask, const int* QCount,
+
+  // used in Recursive Phase King
+  int splitCommitee(vector<char>& commitee_mask, int* QCount);
+  void mapCommitee(const vector<char>& commitee_mask, const int* QCount,
                     int myCommitee);
-  void unmap_commitee(const vector<char>& commitee_mask, const int* QCount,
+  void unmapCommitee(const vector<char>& commitee_mask, const int* QCount,
                       int myCommitee);
   void commiteeSendBit(const vector<char>& commitee_mask, const int* QCount,
                        int myCommitee, bool newb);
@@ -130,7 +135,6 @@ public:
   ~BAParty();
   
   // set protocol properties: (should be known before running!)
-  // TODO: change depending on how outter protocol is implemented (ask George)
   void setParties(vector< shared_ptr<ProtocolPartyData> >& parties, int myId);
   void setHIM(HIM<FieldType>& common_HIM);
   void setAlphaBeta(vector<FieldType>& alpha, vector<FieldType>& beta);
@@ -485,6 +489,7 @@ gatherBitWorker(vector<bool>& recvBits,
       // skip inactive (eliminated) parties
       continue;
     }
+
     _partySocket[i]->getChannel()->read((byte*) &(recvBytes[i]), 1 );
   }
 
@@ -527,6 +532,19 @@ broadcastBit(bool sendBit, int kingId){
   
 }
 
+template <class FieldType>
+void BAParty<FieldType>::
+printActiveParties(){
+  int nParties = _partySocket.size();
+  cout << "currently active parties are: ";
+  for(int i=0; i<nParties; i++){
+    if(_activeMask[i]){
+      cout << _partySocket[i]->getID() << " ";
+    }
+  }
+  cout << endl;
+  return;
+}
 
 template <class FieldType>
 void BAParty<FieldType>::
@@ -536,7 +554,8 @@ commiteeSendBit(const vector<char>& commitee_mask, const int* QCount,
   // -- set my commitee to in-active
   // -- broad cast to all active parties
   // -- reset my commitee to active
-  map_commitee(commitee_mask, QCount, 1-myCommitee);
+  mapCommitee(commitee_mask, QCount, 1-myCommitee);
+  //  printActiveParties();
   vector<thread> threads(_nThread);
   for(int i=0; i<_nThread; i++){
     threads[i] = thread(&BAParty::broadcastBitWorker, this,
@@ -545,7 +564,7 @@ commiteeSendBit(const vector<char>& commitee_mask, const int* QCount,
   for(int i=0; i<_nThread; i++){
     threads[i].join();
   }
-  unmap_commitee(commitee_mask, QCount, 1-myCommitee);
+  unmapCommitee(commitee_mask, QCount, 1-myCommitee);
   return;
 }
 
@@ -557,7 +576,7 @@ commiteeRecvBits(const vector<char>& commitee_mask, const int* QCount,
   // -- set my commitee to in-active
   // -- recv from all active parties
   // -- reset my commitee to active
-  map_commitee(commitee_mask, QCount, 1-myCommitee);
+  mapCommitee(commitee_mask, QCount, 1-myCommitee);
   vector<thread> threads(_nThread);
   for(int i=0; i<_nThread; i++){
     threads[i] = thread(&BAParty::gatherBitWorker, this,
@@ -566,7 +585,7 @@ commiteeRecvBits(const vector<char>& commitee_mask, const int* QCount,
   for(int i=0; i<_nThread; i++){
     threads[i].join();
   }
-  unmap_commitee(commitee_mask, QCount, 1-myCommitee);
+  unmapCommitee(commitee_mask, QCount, 1-myCommitee);
   return;
 }
 
@@ -615,18 +634,30 @@ consensus_base(bool b){
   int smallT = (_nActiveParties-1) /3;
   int nRounds = smallT + 1;
   int nParties = _partySocket.size();
-  int kingId = 0;
+  int kingIdx = 0;
   int D[] = {0, 0};
   vector<bool> receivedBits(nParties);
   vector<bool> receivedBits2(nParties);
+
+  bool firstGreater = true;
+  
   for(int i=0; i<nRounds; i++){
+    cout << "-------- base round " << i << endl;
     // skip to next active party
-    while( !_activeMask[kingId] ){ kingId++; }
-    bool isKing = (kingId == _myId);
+    while( !_activeMask[kingIdx] ){ kingIdx++; }
+    int kingId;
+    bool isKing;
+    if(_partySocket[kingIdx]->getID() > _myId && firstGreater){
+      kingId = _myId;
+      isKing = true;
+      firstGreater = false;
+    }else{
+      kingId = _partySocket[kingIdx]->getID();
+      isKing = false;
+    }
 
     // the two universal rounds
     b = universal_rounds(b, D, receivedBits, receivedBits2);
-  
     // last king broadcast round
     bool newb = broadcastBit(b, kingId);
     if(!isKing){
@@ -640,7 +671,7 @@ consensus_base(bool b){
 
 template <class FieldType>
 int BAParty<FieldType>::
-split_commitee(vector<char>& commitee_mask, int* QCount){
+splitCommitee(vector<char>& commitee_mask, int* QCount){
   int curCommitee = 0;
   int myCommitee; // <-- to be set in the loop
   int nParties = _partySocket.size();
@@ -661,13 +692,18 @@ split_commitee(vector<char>& commitee_mask, int* QCount){
     curCommitee = 1-curCommitee;
   }
 
+  if(firstGreater){
+    // I'm the largest ID
+    myCommitee = curCommitee;
+  }
+
   return myCommitee;
 }
 
 template <class FieldType>
 void BAParty<FieldType>::
-map_commitee(const vector<char>& commitee_mask,
-                const int* QCount, int myCommitee){
+mapCommitee(const vector<char>& commitee_mask,
+             const int* QCount, int myCommitee){
   int nParties = _partySocket.size();
   for(int i=0; i<nParties; i++){
     if(commitee_mask[i] == 1-myCommitee){
@@ -680,8 +716,8 @@ map_commitee(const vector<char>& commitee_mask,
 
 template <class FieldType>
 void BAParty<FieldType>::
-unmap_commitee(const vector<char>& commitee_mask,
-                  const int* QCount, int myCommitee){
+unmapCommitee(const vector<char>& commitee_mask,
+               const int* QCount, int myCommitee){
   int nParties = _partySocket.size();
   for(int i=0; i<nParties; i++){
     if(commitee_mask[i] == 1-myCommitee){
@@ -689,6 +725,20 @@ unmap_commitee(const vector<char>& commitee_mask,
     }
   }
   _nActiveParties += QCount[1-myCommitee];  
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+printCommitee(vector<char>& commitee_mask, int myCommitee){
+  int nParties = _partySocket.size();
+  cout << "my commitee (" << myCommitee << ")  has: " << _myId;
+  for(int i=0; i<nParties; i++){
+    if(commitee_mask[i] == myCommitee){
+      cout << " " << _partySocket[i]->getID();
+    }
+  }
+  cout << endl;
   return;
 }
 
@@ -714,14 +764,17 @@ consensus(bool b){
   // -- further divide into 2 committes, marked 1 or 0. Others marked as 2
   // -- divide commitees by consecutive active members
   vector<char> commitee_mask(nParties, 2);
-  int myCommitee = split_commitee(commitee_mask, QCount);
-  
+  int myCommitee = splitCommitee(commitee_mask, QCount);
+  printCommitee(commitee_mask, myCommitee); // TODO: remove
+
   // actual protocol
   vector<bool> receivedBits(nParties);
   vector<bool> receivedBits2(nParties);
   bool newb;
   for(int k=0; k<2; k++){
     // the two universal rounds
+    cout << "-------- round " << k << endl;
+    
     b = universal_rounds(b, D, receivedBits, receivedBits2);
 
     if(myCommitee == k){
@@ -729,11 +782,10 @@ consensus(bool b){
       // -- set the other commitee to in-active
       // -- recurse, with only my commitee being active
       // -- reset the other commitee to active
-      map_commitee(commitee_mask, QCount, myCommitee);
+      mapCommitee(commitee_mask, QCount, myCommitee);
       newb = consensus(b);
-      unmap_commitee(commitee_mask, QCount, myCommitee);
+      unmapCommitee(commitee_mask, QCount, myCommitee);
 
-      // Then, send to all of the other commitee
       commiteeSendBit(commitee_mask, QCount, myCommitee, newb);
     }else{
       // if not my commitee's turn
@@ -756,7 +808,6 @@ consensus(bool b){
   }
   return b;
 }
-
   
 // from CW92:
 // -- TODO, fill in design
