@@ -52,6 +52,13 @@ template <class FieldType>
 FieldType evalPolynomial(FieldType x,
                          vector<FieldType>& polynomial);
 
+
+template <class FieldType>
+void extendedEuclidean(vector<FieldType>& p1,
+                       vector<FieldType>& p2,
+                       FieldType a1,
+                       FieldType a2);
+
 // Functionality 1: concensus protocol by BGP92
 // Functionality 2: broadcast protocol by CW92
 // Functionality 3: Robust batched broadcast in Appendex of BTH
@@ -242,6 +249,45 @@ void dividePolynomial(vector<FieldType>& p1,
   trimZeroes(r);
   return;
 }
+
+template <class FieldType>
+void extendedEuclideanPartial(vector<FieldType>& p1, // input
+                              vector<FieldType>& p2, // input
+                              vector<FieldType>& a1, // output
+                              vector<FieldType>& a2, // output
+                              vector<FieldType>& r,  // output
+                              int minDegree){        // input
+  // p1 is previous remainder
+  // p2 is previous divider
+  // assuming trimed
+  int rDeg = p1.size()-1;
+  if(rDeg < minDegree){
+    // keep reminder == (a1 = 1, a2 = 0)
+    a1.resize(1);
+    a1[0] = FieldType(1);
+    a2.resize(0);
+    r = p1;
+    return;
+  }
+
+  vector<FieldType> remainder, nextA1, nextA2;
+  dividePolynomial(p2, p1, a1, remainder);
+  extendedEuclideanPartial(remainder, p1, nextA1, nextA2, minDegree);
+
+  // a1 = nextA2 - quotient * nextA1
+  scaleToPolynomial( FieldType(0) - FieldType(1), a1);
+  multToPolynomial(nextA1, a1);
+  addToPolynomial(nextA2, a1);
+  a2 = nextA1;
+  return;
+}
+
+// template <class FieldType>
+// void extendedEuclidean(vector<FieldType>& p1,
+//                        vector<FieldType>& p2,
+//                        FieldType& a1,
+//                        FieldType& a2){}
+
 
 
 template <class FieldType>
