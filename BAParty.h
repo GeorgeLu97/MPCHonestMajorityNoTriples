@@ -33,15 +33,11 @@ using namespace std::chrono;
 // Questions:
 // 1. Is ``run in parallel'' different from ``run in batch''?
 //    -- for now, run in sequence.
-// 2. Recursive Phase King, using Phase King as base?
-//    -- if we only need O(n^2) bits, and O(n) round, then its fine.
 // 3. Error checking during protocol (e.g. timeout communication?)
 // 4. How to agree on a constant HIM matrix?
-// 5. send byte instead of bits?
 // 6. count ``received bits'' includes my own bit?
 
 // TODO:
-// 3. Error Correction (reconstrcut)
 // 4. fault_localization. (store messages/ simulate party interactions)
 
 // Function 0: Reconstruct from ECC a polynomial.
@@ -197,6 +193,9 @@ void multToPolynomial(vector<FieldType>& p1,
   int p2_size = p2.size();
   vector<FieldType> tempProduct(p1_size + p2_size - 1, FieldType(0));
   for(int i=0; i<p1_size; i++){
+    if(p1[i] == FieldType(0)){
+      continue;
+    }
     for(int j=0; j<p2_size; j++){
       tempProduct[i+j] += p1[i] * p2[j];
     }
@@ -216,6 +215,34 @@ void scaleToPolynomial(FieldType c,
   }
   return;
 }
+
+template <class FieldType>
+void dividePolynomial(vector<FieldType>& p1,
+                      vector<FieldType>& p2,
+                      vector<FieldType>& q, // quotient
+                      vector<FieldType>& r){ // remainder
+  r = p1;
+  int p1Size = p1.size();
+  int p2Size = p2.size();
+  int qSize = p1Size - p2Size +1;
+  q.resize(qSize);
+
+  for(int i = p1Size - p2Size; i>=0; i--){
+    FieldType topCoeff = p1[ p2Size + i -1] / p2[p2Size-1];
+    q[i] = topCoeff;
+    vector<FieldType> xi(i+1, FieldType(0));
+    xi[i] -= topCoeff;
+    vector<FieldType> p2Tmp = p2;
+    
+    // r -= topCoeff * p2
+    scaleToPolynomial(topCoeff, p2Tmp);
+    addToPolynomial(p2Tmp, r);
+  }
+  trimZeroes(q);
+  trimZeroes(r);
+  return;
+}
+
 
 template <class FieldType>
 FieldType evalPolynomial(FieldType x, 
@@ -822,6 +849,7 @@ broadcast(vector<FieldType>& msg, bool isSender){
 // -- Every dealer distribute 1 value to each party
 // -- Run BroadcastForP() for k values (1 from each dealer)
 // -- Every player reconstruct T values for each dealer w/ ECC
+// -- TODO: implement
 template <class FieldType>
 void BAParty<FieldType>::
 robustBatchBroadcast(vector<FieldType>& elems, bool isDealer){
