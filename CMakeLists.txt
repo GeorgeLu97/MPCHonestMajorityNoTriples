@@ -9,7 +9,7 @@ INCLUDE_DIRECTORIES($ENV{HOME}/ntl-9.10.0/include $ENV{HOME} $ENV{HOME}/libscapi
 
 set(SOURCE_FILES main.cpp
         ProtocolParty.cpp ProtocolParty.h ProtocolTimer.cpp ProtocolTimer.h
-        BAParty.cpp BAParty.h
+        BAParty.cpp BAParty.h ECC.cpp ECC.h
         ZpKaratsubaElement.cpp ZpKaratsubaElement.h
         HashEncrypt.cpp HashEncrypt.h HashAbstract.h TemplateField.cpp)
 
