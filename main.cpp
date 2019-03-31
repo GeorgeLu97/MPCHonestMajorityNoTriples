@@ -1,4 +1,3 @@
-
 #include <stdlib.h>
 #include "ProtocolParty.h"
 #include "BAParty.h"
@@ -44,6 +43,11 @@ void testReconstruct(const vector<int>& poly,
   }
   cout << endl;
 
+  // corrupt (11 - 5) / 2 = 3 points
+  fieldY[1] = FieldType(0) - fieldY[2];
+  fieldY[10] = FieldType(1) - fieldY[3];
+  fieldY[5] = fieldY[0] - fieldY[4];
+
   // try reconstruction
   ecc.reconstruct(fieldY, nCoeff-1, result);
   
@@ -82,7 +86,6 @@ int main(int argc, char* argv[])
         auto duration = duration_cast<milliseconds>(t2-t1).count();
         cout << "time in milliseconds for " << times << " runs: " << duration << endl;
         cout << "end main" << '\n';
-
     }
     else if(fieldType.compare("ZpMersenne61") == 0)
     {
