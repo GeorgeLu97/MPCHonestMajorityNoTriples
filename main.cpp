@@ -1,18 +1,21 @@
 
 #include <stdlib.h>
 #include "ProtocolParty.h"
+#include "BAParty.h"
+#include "ECC.h"
 #include "ZpKaratsubaElement.h"
 #include <smmintrin.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <x86intrin.h>
-#include "BAParty.h"
 
 
 template <class FieldType>
 void testReconstruct(const vector<int>& poly,
                      const vector<int>& alpha,
                      vector<int>& re_poly){
+
+  ECC<FieldType> ecc;
   int nCoeff = poly.size();
   int nPoints = alpha.size();
   vector<FieldType> fieldPoly(nCoeff, FieldType());
@@ -28,10 +31,12 @@ void testReconstruct(const vector<int>& poly,
   // build sample points
   for(int i=0; i<nPoints; i++){
     fieldX[i] = FieldType( alpha[i] );
-    fieldY[i] = evalPolynomial<FieldType>( fieldX[i], fieldPoly );
+    fieldY[i] = ecc.evalPolynomial( fieldX[i], fieldPoly );
     
   }
-
+  
+  ecc.setAlpha(fieldX);
+  
   // output to check
   cout << "evaluation result:" << endl;
   for(int i=0; i<nPoints; i++){
@@ -40,12 +45,12 @@ void testReconstruct(const vector<int>& poly,
   cout << endl;
 
   // try reconstruction
-  reconstruct <FieldType> (fieldX, fieldY, nCoeff-1, result);
+  ecc.reconstruct(fieldY, nCoeff-1, result);
   
   cout << "evaluation after reconstruction:" << endl;
   for(int i=0; i<nPoints; i++){
     cout << "(" << fieldX[i] << " "
-         << evalPolynomial<FieldType>( fieldX[i], result ) << ") ";
+         << ecc.evalPolynomial( fieldX[i], result ) << ") ";
   }
   cout << endl;
   
