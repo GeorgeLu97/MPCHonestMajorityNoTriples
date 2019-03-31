@@ -1,4 +1,3 @@
-
 #include <stdlib.h>
 #include "ProtocolParty.h"
 #include "BAParty.h"
@@ -44,6 +43,11 @@ void testReconstruct(const vector<int>& poly,
   }
   cout << endl;
 
+  // corrupt (11 - 5) / 2 = 3 points
+  fieldY[1] = FieldType(0) - fieldY[2];
+  fieldY[10] = FieldType(1) - fieldY[3];
+  fieldY[5] = fieldY[0] - fieldY[4];
+
   // try reconstruction
   ecc.reconstruct(fieldY, nCoeff-1, result);
   
@@ -70,26 +74,26 @@ int main(int argc, char* argv[])
     cout<<"fieldType = "<<fieldType<<endl;
 
     int polynomial[] = {4, 1, 2, 3, 5}; // size = 5
-    int alpha[] = {1, 4, 9, 20, 5, 8, 6, 3, 7, 2}; // size = 10
+    int alpha[] = {1, 4, 9, 20, 5, 8, 6, 3, 7, 2, 13}; // size = 11
     
     vector<int> result;
     vector<int> poly(polynomial, polynomial+5);
-    vector<int> alph(alpha, alpha+10);
+    vector<int> alph(alpha, alpha+11);
 
     if(fieldType.compare("ZpMersenne31") == 0)
       {
         // testReconstruct<ZpMersenneIntElement>(poly, alph, result);
-        ProtocolParty<ZpMersenneIntElement> protocol(argc, argv);
-        auto t1 = high_resolution_clock::now();
-            protocol.run();
+        // ProtocolParty<ZpMersenneIntElement> protocol(argc, argv);
+        // auto t1 = high_resolution_clock::now();
+        //     protocol.run();
 
-        auto t2 = high_resolution_clock::now();
+        // auto t2 = high_resolution_clock::now();
 
-        auto duration = duration_cast<milliseconds>(t2-t1).count();
-        cout << "time in milliseconds for " << times << " runs: " << duration << endl;
-        cout << "end main" << '\n';
+        // auto duration = duration_cast<milliseconds>(t2-t1).count();
+        // cout << "time in milliseconds for " << times << " runs: " << duration << endl;
+        // cout << "end main" << '\n';
 
-        // testReconstruct<ZpMersenneIntElement>(poly, alph, result);
+        testReconstruct<ZpMersenneIntElement>(poly, alph, result);
       }
     else if(fieldType.compare("ZpMersenne61") == 0)
       {
