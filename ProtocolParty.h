@@ -51,7 +51,6 @@ private:
     int iteration; //number of the current iteration
 
     Measurement* timer;
-    VDM<FieldType> matrix_vand;
     TemplateField<FieldType> *field;
     vector<shared_ptr<ProtocolPartyData>> parties;
 
@@ -61,7 +60,6 @@ private:
 
     vector<tuple<FieldType,FieldType,FieldType>> randomTriplesArray;
 
-    vector<FieldType> bigR;
     vector<byte> h;//a string accumulated that should be hashed in the comparing views function.
 
     ProtocolTimer* protocolTimer;
@@ -74,15 +72,7 @@ private:
 
     /* TODO: probably get rid of all of these for now, 
     only useful for optimization with fixed parties */
-    HIM<FieldType> matrix_for_interpolate;
-    HIM<FieldType> matrix_for_t;
-    HIM<FieldType> matrix_for_2t;
-    vector<FieldType> y_for_interpolate;
 
-
-    HIM<FieldType> matrix_him;
-
-    VDMTranspose<FieldType> matrix_vand_transpose;
 
     HIM<FieldType> m;
 
@@ -100,6 +90,8 @@ private:
     void polyAdd(vector<vector<FieldType>>& addends, vector<FieldType>& sum);
     void polyMult(vector<vector<FieldType>>& multiplicands, vector<FieldType>& product);
     void scalMult(FieldType scalar, vector<FieldType>& poly, vector<FieldType>& product);
+    vector<byte> encodePair1(pair<int,int> f);
+    pair<int,int> decodePair1(vector<byte>& f);
 
 public:
 //    ProtocolParty(int n, int id,string fieldType, string inputsFile, string outputFile, string circuitFile,
@@ -211,14 +203,6 @@ public:
 
 
     /**
-     * This protocol is secure only in the presence of a semi-honest adversary.
-     */
-    void DNHonestMultiplication(FieldType *a, FieldType *b, vector<FieldType> &cToFill, int numOfTrupples);
-
-    void offlineDNForMultiplication(int numOfTriples);
-
-
-    /**
      * The input phase proceeds in two steps:
      * First, for each input gate, the party owning the input creates shares for that input by choosing a random coefficients for the polynomial
      * Then, all the shares are sent to the relevant party
@@ -229,15 +213,37 @@ public:
     void getRandomShares(int numOfRandoms, vector<FieldType> &randomElementsToFill);
     void generateRandomSharesWithCheck(int numOfRnadoms, vector<FieldType>& randomElementsToFill);
 
-    bool doubleShareRandom(int degree1, int degree2, vector<tuple<FieldType, FieldType>> randomDoubles);
+    bool doubleShareRandom(int degree1, int degree2, vector<tuple<FieldType, FieldType>>& randomDoubles);
+    bool doubleShareRandomVerifyOne(int degree1, int degree2, 
+    vector<FieldType>& d1coefficients, vector<FieldType>& d2coefficients, int partyID, 
+    vector<vector<vector<vector<byte>>>>& inputs, vector<vector<vector<vector<byte>>>>& outputs);
+    pair<int,int> doubleShareRandomVerifyAll(int degree1, int degree2, 
+    vector<FieldType>& d1coefficients, vector<FieldType>& d2coefficients,
+    vector<vector<vector<byte>>>& inputs, vector<vector<vector<byte>>>& outputs);
 
     //modification - do fault detection/localization here.
     void generateTriples(vector<tuple<FieldType, FieldType, FieldType>>& randomTriples);
+
+    void removeParties(int party1, int party2);
+
+    pair<int,int> IOConsistency(vector<vector<vector<byte>>>& sentIO, vector<vector<vector<byte>>>& receivedIO);
+    pair<int,int> JudgeIOConsistency(vector<vector<byte>>& mySend, vector<vector<byte>>& myReceive, 
+    vector<vector<vector<byte>>>& allSends, vector<vector<vector<byte>>>& allRecs);
+    pair<int,int> NonJudgeIOConsistency(vector<vector<byte>>& mySend, vector<vector<byte>>& myReceive);
+
+
 
     //return happiness
     //uses P'
     //takes n-2t shares and publicly reconstructs or fails w/ unhappiness
     bool reconstructPublic(vector<FieldType>& secretShares, int degree, vector<FieldType>& reconstructedSecrets);
+    bool reconstructPublicVerifyOne(vector<FieldType>& secretShares, int degree, int partyID, 
+        vector<vector<vector<vector<byte>>>>& inputs, vector<vector<vector<vector<byte>>>>& outputs);
+
+    pair<int,int> reconstructPublicVerifyAll(vector<FieldType>& secretShares, int degree, 
+        vector<vector<vector<byte>>>& inputs, vector<vector<vector<byte>>>& outputs);
+
+
 
     //trusted party
     //partyID can be non active party
@@ -253,17 +259,17 @@ public:
 
     void openShare(int numOfRandomShares, vector<FieldType> &Shares, vector<FieldType> &secrets);
 
-    FieldType evaluatePolynomial(FieldType x, vector<FieldType> coefficients, int start, int degree);
+    FieldType evaluatePolynomial(FieldType x, vector<FieldType>& coefficients, int start, int degree);
 
-    FieldType evaluatePolynomial(FieldType x, vector<FieldType> coefficients);
+    FieldType evaluatePolynomial(FieldType x, vector<FieldType>& coefficients);
+
+    bool isHappy(bool selfHappiness);
 
     /**
      * Process all multiplications which are ready.
      * Return number of processed gates.
      */
     int processMultiplications(int lastMultGate);
-
-    int processMultDN(int indexInRandomArray);
 
     int processNotMult();
 
@@ -289,16 +295,6 @@ public:
         vector<FieldType>& beta, vector<FieldType>& result);
 
     bool interpolateCoefficientsFull(vector<FieldType>& alpha, vector<FieldType>& x, vector<FieldType>& coeffs);
-
-    /**
-     * Walk through the circuit and verify the multiplication gates.
-     * We first generate the random elements using a common AES key that was generated by the parties,
-     * run the relevant verification algorithm and return accept/reject according to the output
-     * of the verification algorithm.
-     */
-    void verificationPhase();
-
-    bool comparingViews();
 
     /**
      * Walk through the circuit and reconstruct output gates.
@@ -407,7 +403,7 @@ ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("Perf
 template<class FieldType> 
 void ProtocolParty<FieldType>::trimZeroes(vector<FieldType>& a) {
     int i = a.size();
-    FieldType Zero = field->GetZero();
+    FieldType Zero = *(field->GetZero());
     while(a[i-1] == Zero && i > 0) { i--; }
     a.resize(i);
 }
@@ -427,8 +423,8 @@ template <class FieldType>
 void ProtocolParty<FieldType>::polyMult2(vector<FieldType>& a, vector<FieldType>& b, vector<FieldType>& product) {
     vector<FieldType> tempProduct(a.size() + b.size() - 1); 
     for(int i = 0; i < a.size(); i++) {
-        for(j = 0; j < b.size(); j++) {
-            tempProduct[i + j] = a[i] * b[j];
+        for(int j = 0; j < b.size(); j++) {
+            tempProduct[i + j] += a[i] * b[j];
         }
     }
     tempProduct = product;
@@ -447,7 +443,7 @@ void ProtocolParty<FieldType>::polyAdd(vector<vector<FieldType>>& addends, vecto
 template <class FieldType>
 void ProtocolParty<FieldType>::polyMult(vector<vector<FieldType>>& multiplicands, vector<FieldType>& product) {
     vector<FieldType> partialProduct;
-    partialProduct.push_back(field->GetOne());
+    partialProduct.push_back(*(field->GetOne()));
     for(auto it = multiplicands.begin(); it != multiplicands.end(); it++) {
         polyMult2(partialProduct, *it, partialProduct);
     }
@@ -466,7 +462,7 @@ void ProtocolParty<FieldType>::scalMult(FieldType scalar, vector<FieldType>& pol
 template <class FieldType>
 void ProtocolParty<FieldType>::lagrange(vector<FieldType>& alpha, vector<FieldType>& x, vector<FieldType>& coeffs) {
     vector<FieldType> unit;
-    unit.push_back(field->GetOne());
+    unit.push_back(*(field->GetOne()));
     vector<vector<FieldType>> linearPolys(alpha.size());
     vector<vector<FieldType>> prefixPolys(alpha.size()); //prefix[i] = (x-alpha_{0 ... i-1})
     vector<vector<FieldType>> suffixPolys(alpha.size()); //suffix[i] = (x-alpha_{i + 1 ... n-1})
@@ -476,8 +472,8 @@ void ProtocolParty<FieldType>::lagrange(vector<FieldType>& alpha, vector<FieldTy
     suffixPolys[alpha.size()-1] = unit;
     
     for(int i = 0; i < alpha.size(); i++) {
-        linearPolys[i].push_back(field->GetZero() - alpha[i]); //-alpha_i
-        linearPolys[i].push_back(field->GetOne());
+        linearPolys[i].push_back(*(field->GetZero()) - alpha[i]); //-alpha_i
+        linearPolys[i].push_back(*(field->GetOne()));
     }
     
     for(int i = 1; i < alpha.size(); i++) {
@@ -487,8 +483,8 @@ void ProtocolParty<FieldType>::lagrange(vector<FieldType>& alpha, vector<FieldTy
 
     for(int i = 0; i < alpha.size(); i++) {
         polyMult2(prefixPolys[i], suffixPolys[i], exclusionPolys[i]);
-        FieldType s = field->GetOne() / evaluatePolynomial(alpha[i], exclusionPolys[i]);
-        scalMult(s * x, exclusionPolys[i], xExclusionPolys[i]);
+        FieldType s = (*(field->GetOne())) / evaluatePolynomial(alpha[i], exclusionPolys[i]);
+        scalMult(s * x[i], exclusionPolys[i], xExclusionPolys[i]);
         //xExclusionPolys[i](alpha_i) = x, xExclusionPolys[i](alpha_j) = 0
     }
 
@@ -580,7 +576,7 @@ template <class FieldType>
 void ProtocolParty<FieldType>::roundFunctionSyncBroadcast(vector<byte> &message, vector<vector<byte>> &recBufs) {
     vector<vector<byte>> sendBufs;
     for(auto it = recBufs.begin(); it != recBufs.end(); it++) { sendBufs.push_back(message); }
-    roundFunctionSync(sendBufs, recBufs);
+    roundFunctionSync(sendBufs, recBufs, 19);
 }
 
 
@@ -603,10 +599,10 @@ void ProtocolParty<FieldType>::roundFunctionSyncForP1(vector<byte>& selfMessage,
     vector<thread> threads(numThreads);
     for (int t=0; t<numThreads; t++) {
         if ((t + 1) * numPartiesForEachThread <= activeParties.size()) {
-            threads[t] = thread(&ProtocolParty::recDataToP1, this,  ref(recBufs),
+            threads[t] = thread(&ProtocolParty::recDataToP1, this,  ref(selfMessage), ref(recBufs),
                                 t * numPartiesForEachThread, (t + 1) * numPartiesForEachThread);
         } else {
-            threads[t] = thread(&ProtocolParty::recDataToP1, this, ref(recBufs), t * numPartiesForEachThread, activeParties.size());
+            threads[t] = thread(&ProtocolParty::recDataToP1, this, ref(selfMessage), ref(recBufs), t * numPartiesForEachThread, activeParties.size());
         }
     }
     for (int t=0; t<numThreads; t++){
@@ -695,7 +691,8 @@ void ProtocolParty<FieldType>::decodeFieldElts(vector<byte>& input, vector<Field
 template <class FieldType>
 bool ProtocolParty<FieldType>::checkConsistency(vector<FieldType>& x, int d)
 {
-    return checkConsistency(getAlpha(), x, d);
+    vector<FieldType> alpha = getAlpha();
+    return checkConsistency(alpha, x, d);
 }
 
 /* p is input fieldelt's */
@@ -747,20 +744,22 @@ FieldType ProtocolParty<FieldType>::interpolate(vector<FieldType>& x, int d)
     (void)d; //unused for now, but will be needed for error correction
     vector<FieldType> result(1);
     vector<FieldType> beta(1);
-    beta[0] = field->GetZero(); 
+    vector<FieldType> alpha = getAlpha();
+    beta[0] = *(field->GetZero()); 
     //takes advantage of fact that constant term of polynomial = p(0)
-    interpolateFull(getAlpha(), x, beta, result);
+    interpolateFull(alpha, x, beta, result);
     return result[0];
 }
 
 //alpha should be N' long
 template <class FieldType>
-void ProtocolParty<FieldType>::getAlpha(vector<FieldType>& alpha)
+vector<FieldType> ProtocolParty<FieldType>::getAlpha()
 {
-    alpha.resize(activePartyIDs.size() + 1);
+    vector<FieldType> alpha(activePartyIDs.size());
     for(int i = 0; i < activePartyIDs.size(); i++) {
         alpha[i] = field->GetElement(activePartyIDs[i] + 1);
     }
+    return alpha;
 }
 
 // Interpolate polynomial at position Zero
@@ -779,9 +778,9 @@ void ProtocolParty<FieldType>::interpolateFull(vector<FieldType>& alpha, vector<
 //where coeff = coefficients[start, start + degree]
 //degree = length - 1 = last index used
 template <class FieldType>
-FieldType ProtocolParty<FieldType>::evaluatePolynomial(FieldType x, vector<FieldType> coefficients, int start, int degree)
+FieldType ProtocolParty<FieldType>::evaluatePolynomial(FieldType x, vector<FieldType>& coefficients, int start, int degree)
 {
-    FieldType res = field->GetZero();
+    FieldType res = *(field->GetZero());
     //if degree is too large, 
     int lastindex = start + degree;
     if(lastindex >= coefficients.size()) { lastindex = coefficients.size() - 1; }
@@ -802,7 +801,7 @@ template <class FieldType>
 bool ProtocolParty<FieldType>::isHappy(bool selfHappiness) {
     vector<byte> happiness;
     vector<vector<byte>> otherHappiness(activeParties.size());
-    happiness.push_back((int)selfHappiness);
+    happiness.push_back(selfHappiness ? 1 : 0);
     for(int i = 0; i < activeParties.size(); i++) {
         otherHappiness[i].resize(1);
     }
@@ -810,13 +809,14 @@ bool ProtocolParty<FieldType>::isHappy(bool selfHappiness) {
     roundFunctionSyncBroadcast(happiness, otherHappiness);
     if(!selfHappiness) { return false; }
     for(int i = 0; i < activeParties.size(); i++) {
-        if(!otherHappiness[i]) { return false; }
+        if(otherHappiness[i][0] != 0) { return false; }
     }
     return true;
 }
 
 
-vector<byte> encodePair(pair<int,int> f) {
+template <class FieldType>
+vector<byte> ProtocolParty<FieldType>::encodePair1(pair<int,int> f) {
     vector<byte> results(8);
 
     unsigned int f1 = (unsigned int)f.first;
@@ -833,7 +833,8 @@ vector<byte> encodePair(pair<int,int> f) {
     return results;
 }
 
-pair<int,int> decodePair(vector<byte>& f) {
+template <class FieldType>
+pair<int,int> ProtocolParty<FieldType>::decodePair1(vector<byte>& f) {
     pair<int,int> g;
 
     for(int i = sizeof(int) - 1; i >= 0; i--) {
@@ -851,19 +852,23 @@ FieldType ProtocolParty<FieldType>::reconstructPrivate(FieldType secretShare, in
     vector<byte> ssb(field->getElementSizeInBytes());
     field->elementToBytes(ssb.data(), secretShare);
     if(m_partyId == partyID) {
-        vector<vector<FieldType>> allShares(N1);
+        vector<vector<byte>> allShares(N1);
+        vector<FieldType> allSharesTrue(N1);
         for(int i = 0; i < N1; i++) {
             allShares[i].resize(field->getElementSizeInBytes());
         } 
-        roundFunctionsyncForP1(ssb, allShares);
-        FieldType ans = interpolate(allShares, degree);
+        roundFunctionSyncForP1(ssb, allShares);
+        for(int i = 0; i < N1; i++) {
+            allSharesTrue[i] = field->bytesToElement(allShares[i].data());
+        }
+        FieldType ans = interpolate(allSharesTrue, degree);
 
         return ans;
     } else if(selfActive) {
         parties[partyID]->getChannel()->write(ssb.data(), ssb.size());
         //parties[partyID]->getChannel()->read(ssb.data(), ssb.size());
         //return field->bytesToElement(ssb.data());
-        return field->GetZero();
+        return *(field->GetZero());
     }
 }
 
@@ -885,6 +890,11 @@ bool ProtocolParty<FieldType>::reconstructPublic(vector<FieldType>& secretShares
 
     vector<vector<byte>> sendBufs(N1);
     vector<vector<byte>> recBufs(N1);
+
+    vector<byte> uiSend;
+    vector<vector<byte>> uiRec(N1);
+    vector<vector<byte>> uiSendAll(N1);
+
     for(int i = 0; i < activeParties.size(); i++) {
         encodeFieldElts(ujs[i], sendBufs[i]);
         recBufs[i].resize(ujs[i].size());
@@ -892,6 +902,131 @@ bool ProtocolParty<FieldType>::reconstructPublic(vector<FieldType>& secretShares
 
     //sendBufs should have degree bigT poylnomial
     roundFunctionSync(sendBufs, recBufs, 13);
+    vector<vector<FieldType>> ujd(N1);
+
+    for(int i = 0; i < activeParties.size(); i++) {
+        decodeFieldElts(recBufs[i], ujd[i]);
+    }
+    
+    vector<vector<FieldType>> ujd_transpose;
+    transpose(ujd, ujd_transpose);
+
+    for(auto it = ujd_transpose.begin(); it != ujd_transpose.end(); it++) {
+        if(!checkConsistency(*it, degree)) {
+            happiness = false;
+            break;
+        }
+    }
+
+    if(!isHappy(happiness)) { 
+        vector<vector<vector<byte>>> inputs;
+        vector<vector<vector<byte>>> outputs;
+        inputs.push_back(sendBufs);
+        inputs.push_back(uiSendAll);
+        outputs.push_back(recBufs);
+        outputs.push_back(uiRec);
+        reconstructPublicVerifyAll(secretShares, degree, inputs, outputs);
+        return false;
+    }
+
+    //recovered ui;
+    vector<FieldType> ui;
+    for(auto it = ujd_transpose.begin(); it != ujd_transpose.end(); it++) {
+        ui.push_back(interpolate(*it, degree));
+    }
+    
+    //broadcast computed ui's
+    encodeFieldElts(ui, uiSend);
+    for(auto it = uiRec.begin(); it != uiRec.end(); it++) {
+        it->resize(uiSend.size());
+    }
+
+    //uisend should be constant
+    // = s1 + s2b + s3b^2 + ... where b = group elt and s1 is true secret. 
+    roundFunctionSyncBroadcast(uiSend, uiRec);
+
+    vector<vector<FieldType>> uj(N1);
+
+    for(int i = 0; i < activePartyIDs.size(); i++) {
+        decodeFieldElts(uiRec[i], uj[i]);
+    }
+
+    vector<vector<FieldType>> uj_transpose;
+    transpose(uj, uj_transpose);
+    
+    //uiSend should be repeated field elt
+    //uiRec should be 
+    for(auto it = uj_transpose.begin(); it != uj_transpose.end(); it++) {
+        if(!checkConsistency(*it, bigT - 1)) {
+            happiness = false;
+            break;
+        }
+    }
+
+    if(!isHappy(happiness)) {
+        vector<vector<vector<byte>>> inputs;
+        vector<vector<vector<byte>>> outputs;
+        for(int i = 0; i < N1; i++) {
+            uiSendAll.push_back(uiSend);
+        }
+        inputs.push_back(sendBufs);
+        inputs.push_back(uiSendAll);
+        outputs.push_back(recBufs);
+        outputs.push_back(uiRec);
+        reconstructPublicVerifyAll(secretShares, degree, inputs, outputs); 
+        return false; 
+    }
+
+    //ui -> si values to coefficients
+    for(auto it = uj_transpose.begin(); it != uj_transpose.end(); it++) {
+        it->resize(bigT);
+        vector<FieldType> alpha = getAlpha();
+        vector<FieldType> si;
+        lagrange(alpha, *it, si);
+        for(auto it2 = si.begin(); it2 != si.end(); it2++) { reconstructedSecrets.push_back(*it2); }
+    }
+    return true;
+}
+
+template <class FieldType>
+bool ProtocolParty<FieldType>::reconstructPublicVerifyOne(vector<FieldType>& secretShares, int degree, int partyID,
+        vector<vector<vector<vector<byte>>>>& inputs, vector<vector<vector<vector<byte>>>>& outputs)
+{
+    //It's possible someone lies about their secretShares, so we should check that too in verifyAll
+    //inputs[0][partyId] = sendBufs
+    //inputs[1][partyId] = uiSend x n
+
+    //outputs[0][partyId] = recBufs
+    //outputs[1][partyId] = uiRec
+    bool happiness = true;
+    vector<vector<FieldType>> ujs;
+    for(auto it = activePartyIDs.begin(); it != activePartyIDs.end(); it++) {
+        vector<FieldType> partyPoly;
+        for(int start = 0; start < secretShares.size(); start += bigT) {
+            partyPoly.push_back(evaluatePolynomial(field->GetElement((*it) + 1), secretShares, start, bigT - 1));
+        }
+        ujs.push_back(partyPoly);
+    }
+
+    vector<vector<byte>> sendBufs(N1);
+    vector<vector<byte>> recBufs(N1);
+    for(int i = 0; i < activeParties.size(); i++) {
+        encodeFieldElts(ujs[i], sendBufs[i]);
+        recBufs[i].resize(ujs[i].size());
+    }
+
+
+    //check == inputs;
+    //sendBufs should have degree bigT poylnomial
+    //roundFunctionSync(sendBufs, recBufs, 13);
+    //first input
+    if(sendBufs != inputs[0][partyID]) {
+        return false;
+    } else {
+        recBufs = outputs[0][partyID];
+    }
+
+
     vector<vector<FieldType>> ujd(N1);
 
     for(int i = 0; i < activeParties.size(); i++) {
@@ -920,14 +1055,23 @@ bool ProtocolParty<FieldType>::reconstructPublic(vector<FieldType>& secretShares
     vector<byte> uiSend;
     vector<vector<byte>> uiRec(N1);
     encodeFieldElts(ui, uiSend);
-    for(it = uiRec.begin(); it != uiRec.end(); it++) {
+    for(auto it = uiRec.begin(); it != uiRec.end(); it++) {
         it->resize(uiSend.size());
     }
 
     //uisend should be constant
     // = s1 + s2b + s3b^2 + ... where b = group elt and s1 is true secret. 
-    roundFunctionSyncBroadcast(uiSend, uiRec);
+    //roundFunctionSyncBroadcast(uiSend, uiRec);
+    for(int i = 0; i < inputs[1][partyID].size(); i++) {
+        if(inputs[1][partyID][i] != uiSend) {
+            return false;
+        }
+    }
 
+    uiRec = outputs[1][partyID];
+
+
+    /*
     vector<vector<FieldType>> uj(N1);
 
     for(int i = 0; i < activePartyIDs.size(); it++) {
@@ -955,12 +1099,150 @@ bool ProtocolParty<FieldType>::reconstructPublic(vector<FieldType>& secretShares
         vector<FieldType> si;
         lagrange(alpha, *it, si);
         for(auto it2 = si.begin(); it2 != si.end(); it2++) { reconstructedSecrets.push_back(*it2); }
-    }
+    } */
     return true;
 }
 
 template <class FieldType>
+pair<int,int> ProtocolParty<FieldType>::reconstructPublicVerifyAll(
+    vector<FieldType>& secretShares, int degree, 
+    vector<vector<vector<byte>>>& inputs, vector<vector<vector<byte>>>& outputs) {
+
+
+    pair<int,int> result;
+
+    vector<vector<vector<vector<byte>>>> inputsA(2);
+    vector<vector<vector<vector<byte>>>> outputsA(2);
+
+
+    vector<byte> secretShareBytes;
+
+    encodeFieldElts(secretShares, secretShareBytes);
+
+    vector<vector<byte>> secretShareBytesA;
+    //is judge
+    if(m_partyId == activePartyIDs[0]) {
+
+        //exchange coefficients
+        roundFunctionSyncForP1(secretShareBytes, secretShareBytesA);
+
+        int wronground;
+
+        for(wronground = 0; wronground < 2; wronground++) {
+            result = JudgeIOConsistency(inputs[wronground], outputs[wronground], inputsA[wronground], outputsA[wronground]);
+            if(result.first >= 0) { break; }
+        }
+
+        vector<vector<FieldType>> secretSharesA(N1);
+        for(int i = 0; i < N1; i++) {
+            decodeFieldElts(secretShareBytesA[i], secretSharesA[i]);
+        }
+
+        //TODO: check secretShares are consistent, if not, return self, inconsistent person. 
+        for(int i = 0; i < secretShares.size(); i++) {
+            vector<FieldType> secretI(N1);
+            for(int j = 0; j < N1; j++) {
+                secretI.push_back(secretSharesA[j][i]);
+            }
+            //check consistency of j; if non-consistent, return self, nonconsistent element
+        }
+
+        for(int i = 1; i < N1; i++) {
+            if(result.first >= 0) { break; }
+
+            if(!reconstructPublicVerifyOne(secretSharesA[i], degree, i, inputsA, outputsA)) 
+            { //info provided by agent i conflicts with protocol
+                result = make_pair(0, i);
+            }
+        }
+
+        vector<byte> resPair = encodePair1(result);
+
+        sendFromP1(resPair);
+
+        //make some bounds checks?
+        if(result.first > 0 && result.second > 0) { //pair does not include judge, others need to provide agree / disagree
+            //broadcast all ij != ji messages
+            vector<byte> comnum;
+            comnum.push_back((byte)wronground);
+            sendFromP1(comnum);
+            sendFromP1(inputsA[wronground][result.first][result.second]);
+            sendFromP1(outputsA[wronground][result.second][result.first]);
+
+            vector<byte> disagree1(1);
+            vector<byte> disagree2(1);
+
+            //thie needs to be byzantine too.
+            activeParties[result.first]->getChannel()->read(disagree1.data(), disagree1.size());
+            activeParties[result.second]->getChannel()->read(disagree2.data(), disagree2.size());
+            if(disagree1[0]) {
+                removeParties(0, result.first);
+            } else if(disagree2[0]){
+                removeParties(0, result.second);
+            } else {
+                removeParties(result.first, result.second);
+            }
+        }
+
+    } else { //conditions -1 = no inconsistency, if judge is inconsistent, then 
+        activeParties[0]->getChannel()->write(secretShareBytes.data(), secretShareBytes.size());
+
+        int wronground;
+
+        for(wronground = 0; wronground < 2; wronground++) {
+            result = NonJudgeIOConsistency(inputs[wronground], outputs[wronground]);
+            if(result.first >= 0) { break; }
+        }
+
+        vector<byte> resultBytes(8);
+        activeParties[0]->getChannel()->read(resultBytes.data(), resultBytes.size());
+        result = decodePair1(resultBytes);
+        
+        if(result.first > 0 && result.second > 0) { 
+            vector<byte> comnum(1);
+            vector<byte> disagree1(1);
+            vector<byte> disagree2(1);
+            activeParties[0]->getChannel()->read(comnum.data(), comnum.size());
+            vector<byte> msg(inputs[comnum[0]][result.first].size());
+            
+            if(activePartyIDs[result.first] == m_partyId) {
+                activeParties[0]->getChannel()->read(msg.data(), msg.size());
+                disagree1[0] = (msg != inputs[comnum[0]][result.second]);
+                activeParties[0]->getChannel()->read(msg.data(), msg.size());
+                sendFromP1(disagree1);
+                activeParties[result.second]->getChannel()->read(disagree2.data(), disagree2.size());
+
+            } else if(activePartyIDs[result.second] == m_partyId) {
+                activeParties[0]->getChannel()->read(msg.data(), msg.size());
+                activeParties[0]->getChannel()->read(msg.data(), msg.size());
+                disagree2[0] = (msg != outputs[comnum[0]][result.first]);
+                activeParties[result.second]->getChannel()->read(disagree2.data(), disagree2.size());
+                sendFromP1(disagree2);
+
+            } else {
+                activeParties[0]->getChannel()->read(msg.data(), msg.size());
+                activeParties[0]->getChannel()->read(msg.data(), msg.size());
+                activeParties[result.first]->getChannel()->read(disagree1.data(), disagree1.size());
+                activeParties[result.second]->getChannel()->read(disagree2.data(), disagree2.size());
+            }
+
+            if(disagree1[0]) {
+                removeParties(0, result.first);
+            } else if(disagree2[0]){
+                removeParties(0, result.second);
+            } else {
+                removeParties(result.first, result.second);
+            }
+        }
+    }
+
+    return result;
+
+}
+
+template <class FieldType>
 bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vector<tuple<FieldType, FieldType>>& randomDoubles) {
+    bool happiness = true;
     int eltSize = field->getElementSizeInBytes();
     vector<FieldType> d1share;
     vector<FieldType> d2share;
@@ -987,8 +1269,8 @@ bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vecto
     for(int i = 0; i < N1; i++) {
         d1sharebytes[i].resize(eltSize);
         d2sharebytes[i].resize(eltSize);
-        elementToBytes(d1sharebytes.data(),d1share[i]);
-        elementToBytes(d2sharebytes.data(),d2share[i]);
+        field->elementToBytes(d1sharebytes[i].data(),d1share[i]);
+        field->elementToBytes(d2sharebytes[i].data(),d2share[i]);
         d1shareallbytes[i].resize(eltSize);
         d2shareallbytes[i].resize(eltSize);
     }
@@ -1000,8 +1282,8 @@ bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vecto
     vector<FieldType> d2shareall(N1);
 
     for(int i = 0; i < N1; i++) {
-        d1shareall.push_back(bytesToElement(d1shareallbytes[i].data()));
-        d2shareall.push_back(bytesToElement(d2shareallbytes[i].data()));
+        d1shareall.push_back(field->bytesToElement(d1shareallbytes[i].data()));
+        d2shareall.push_back(field->bytesToElement(d2shareallbytes[i].data()));
     }
 
     vector<FieldType> r1shares(N1);
@@ -1021,11 +1303,11 @@ bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vecto
         partialr1sharebytes[i].resize(eltSize);
         partialr2sharebytes[i].resize(eltSize);
         if(i >= bigT) {
-            field->elementToBytes(partialr1sharebytes.data(), r1shares[i]);
-            field->elementToBytes(partialr2sharebytes.data(), r2shares[i]);
+            field->elementToBytes(partialr1sharebytes[i].data(), r1shares[i]);
+            field->elementToBytes(partialr2sharebytes[i].data(), r2shares[i]);
         } else {
-            field->elementToBytes(partialr1sharebytes.data(), field->GetZero());
-            field->elementToBytes(partialr2sharebytes.data(), field->GetZero());
+            field->elementToBytes(partialr1sharebytes[i].data(), *(field->GetZero()));
+            field->elementToBytes(partialr2sharebytes[i].data(), *(field->GetZero()));
         }
     }
 
@@ -1059,8 +1341,8 @@ bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vecto
         inputs.push_back(d2sharebytes);
         inputs.push_back(partialr1sharebytes);
         inputs.push_back(partialr2sharebytes);
-        outputs.push_back(d1sharebytesall);
-        outputs.push_back(d2sharebytesall);
+        outputs.push_back(d1shareallbytes);
+        outputs.push_back(d2shareallbytes);
         outputs.push_back(v1sharebytes);
         outputs.push_back(v2sharebytes);
 
@@ -1092,7 +1374,7 @@ bool ProtocolParty<FieldType>::doubleShareRandomVerifyOne(int degree1, int degre
     vector<vector<byte>>& partialr2sharebytes1, vector<vector<byte>>& v2sharebytes1) {
 */
 
-    if(d1coefficients1.size() != degree1 + 1 || d2coefficients.size() != degree2 + 1 
+    if(d1coefficients.size() != degree1 + 1 || d2coefficients.size() != degree2 + 1 
         || d1coefficients[0] != d2coefficients[0]) {
         return false;
     }
@@ -1127,8 +1409,8 @@ bool ProtocolParty<FieldType>::doubleShareRandomVerifyOne(int degree1, int degre
     for(int i = 0; i < N1; i++) {
         d1sharebytes[i].resize(eltSize);
         d2sharebytes[i].resize(eltSize);
-        elementToBytes(d1sharebytes.data(),d1share[i]);
-        elementToBytes(d2sharebytes.data(),d2share[i]);
+        field->elementToBytes(d1sharebytes[i].data(),d1share[i]);
+        field->elementToBytes(d2sharebytes[i].data(),d2share[i]);
     }
     
     //generated wrong d1sharebytes
@@ -1140,8 +1422,8 @@ bool ProtocolParty<FieldType>::doubleShareRandomVerifyOne(int degree1, int degre
     vector<FieldType> d2shareall(N1);
 
     for(int i = 0; i < N1; i++) {
-        d1shareall[i] = bytesToElement(d1shareallbytes[i].data());
-        d2shareall[i] = bytesToElement(d2shareallbytes[i].data());
+        d1shareall[i] = field->bytesToElement(d1sharebytesall1[i].data());
+        d2shareall[i] = field->bytesToElement(d2sharebytesall1[i].data());
     }
 
     vector<FieldType> r1shares(N1);
@@ -1162,11 +1444,11 @@ bool ProtocolParty<FieldType>::doubleShareRandomVerifyOne(int degree1, int degre
         partialr1sharebytes[i].resize(eltSize);
         partialr2sharebytes[i].resize(eltSize);
         if(i >= bigT) {
-            field->elementToBytes(partialr1sharebytes.data(), r1shares[i]);
-            field->elementToBytes(partialr2sharebytes.data(), r2shares[i]);
+            field->elementToBytes(partialr1sharebytes[i].data(), r1shares[i]);
+            field->elementToBytes(partialr2sharebytes[i].data(), r2shares[i]);
         } else {
-            field->elementToBytes(partialr1sharebytes.data(), field->GetZero());
-            field->elementToBytes(partialr2sharebytes.data(), field->GetZero());
+            field->elementToBytes(partialr1sharebytes[i].data(), *(field->GetZero()));
+            field->elementToBytes(partialr2sharebytes[i].data(), *(field->GetZero()));
         }
     }
 
@@ -1251,7 +1533,7 @@ pair<int,int> ProtocolParty<FieldType>::doubleShareRandomVerifyAll(int degree1, 
         int wronground;
 
         for(wronground = 0; wronground < 4; wronground++) {
-            result = JudgeIOConsistency(inputs[i], outputs[i], inputsA[i], outputsA[i]);
+            result = JudgeIOConsistency(inputs[wronground], outputs[wronground], inputsA[wronground], outputsA[wronground]);
             if(result.first >= 0) { break; }
         }
 
@@ -1263,18 +1545,23 @@ pair<int,int> ProtocolParty<FieldType>::doubleShareRandomVerifyAll(int degree1, 
             decodeFieldElts(d1coeffBytesA[i], d1coefficientsI);
             decodeFieldElts(d2coeffBytesA[i], d2coefficientsI); 
 
-            if(!doubleShareRandomVerifyOne(degree1, degree2, i, d1coefficientsI, d2coefficientsI, inputsA, outputsA)) 
+            if(!doubleShareRandomVerifyOne(degree1, degree2, d1coefficientsI, d2coefficientsI, i, inputsA, outputsA)) 
             { //info provided by agent i conflicts with protocol
                 result = make_pair(0, i);
             }
         }
 
-        sendFromP1(encodePair(result));
+        vector<byte> resPair = encodePair1(result);
+
+        sendFromP1(resPair);
 
         if(result.first > 0 && result.second > 0) { //pair does not include judge, others need to provide agree / disagree
             //broadcast all ij != ji messages
 
-            sendFromP1(wronground);
+            vector<byte> comnum;
+            comnum.push_back((byte)wronground);
+
+            sendFromP1(comnum);
             sendFromP1(inputsA[wronground][result.first][result.second]);
             sendFromP1(outputsA[wronground][result.second][result.first]);
 
@@ -1297,14 +1584,16 @@ pair<int,int> ProtocolParty<FieldType>::doubleShareRandomVerifyAll(int degree1, 
         activeParties[0]->getChannel()->write(d1coefficientBytes.data(), d1coefficientBytes.size());
         activeParties[0]->getChannel()->write(d2coefficientBytes.data(), d2coefficientBytes.size());
 
+        int wronground;
+
         for(wronground = 0; wronground < 4; wronground++) {
-            result = NonJudgeIOConsistency(inputs[i], outputs[i], inputsA[i], outputsA[i]);
+            result = NonJudgeIOConsistency(inputs[wronground], outputs[wronground]);
             if(result.first >= 0) { break; }
         }
 
         vector<byte> resultBytes(8);
         activeParties[0]->getChannel()->read(resultBytes.data(), resultBytes.size());
-        result = decodePair(resultBytes);
+        result = decodePair1(resultBytes);
         
         if(result.first > 0 && result.second > 0) { 
             vector<byte> comnum(1);
@@ -1401,11 +1690,11 @@ pair<int,int> ProtocolParty<FieldType>::IOConsistency(vector<vector<vector<byte>
     for(int i = 0; i < N1; i++) {
         for(int j = 0; j < N1; j++) {
             if(i != j && activePartyIDs[i] != m_partyId && sentIO[i][j] != receivedIO[j][i]) {
-                return make_pair<i,j>;
+                return make_pair(i,j);
             }
         }
     }
-    return make_pair<-1,-1>;
+    return make_pair(-1,-1);
 }
 
 //if double, check degree is equal and and define d, d' shares;
@@ -1438,8 +1727,6 @@ pair<int,int> ProtocolParty<FieldType>::JudgeIOConsistency(vector<vector<byte>>&
 
     allSends.resize(N1);
     allRecs.resize(N1);
-    vector<vector<byte>> allSends1(N1);
-    vector<vector<byte>> allRecs1(N1);
     for(int i = 0; i < N1; i++) {
         allSends1[i].resize(dim1 * dim2);
         allRecs1[i].resize(dim1 * dim2);
@@ -1455,14 +1742,14 @@ pair<int,int> ProtocolParty<FieldType>::JudgeIOConsistency(vector<vector<byte>>&
         for(int j = 0; j < dim1; j++) {
             for(int k = 0; k < dim2; k++) {
                 allSends[i][j].push_back(allSends1[i][dim2 * j + k]);
-                allRecss[i][j].push_back(allRecs1[i][dim2 * j + k]);
+                allRecs[i][j].push_back(allRecs1[i][dim2 * j + k]);
             }
         }
     }
 
     pair<int, int> firstwrong = IOConsistency(allSends, allRecs);
 
-    vector<byte> results = encodePair(firstwrong);
+    vector<byte> results = encodePair1(firstwrong);
 
     sendFromP1(results);
 
@@ -1471,7 +1758,7 @@ pair<int,int> ProtocolParty<FieldType>::JudgeIOConsistency(vector<vector<byte>>&
 
 //polynomial
 template <class FieldType>
-bool ProtocolParty<FieldType>::NonJudgeIOConsistency(vector<vector<byte>>& mySend, vector<vector<byte>>& myReceive)  {
+pair<int,int> ProtocolParty<FieldType>::NonJudgeIOConsistency(vector<vector<byte>>& mySend, vector<vector<byte>>& myReceive)  {
 
     if(activePartyIDs[0] == m_partyId) {
         cout << "Should be Judge !!!" << endl;
@@ -1499,7 +1786,7 @@ bool ProtocolParty<FieldType>::NonJudgeIOConsistency(vector<vector<byte>>& mySen
     //read from sent P1.
     activeParties[0]->getChannel()->read(results.data(), results.size());
 
-    return decodePair(results);
+    return decodePair1(results);
 }
 
 template <class FieldType>
@@ -1509,7 +1796,7 @@ int ProtocolParty<FieldType>::processMultiplications(int lastMultGate)
     int numProcessed = 0;
     vector<FieldType> a,b,c,d,e,dr,er;
     vector<int> outind;
-    return processMultDN(lastMultGate);
+    
     for (int k = circuit.getLayers()[currentCirciutLayer]; 
     k < circuit.getLayers()[currentCirciutLayer + 1]; k++)//go over only the logit gates
     {
@@ -1579,7 +1866,7 @@ int ProtocolParty<FieldType>::processNotMult(){
         }
         else if(circuit.getGates()[k].gateType == RANDOM) 
         {
-            gateShareArr[circuit.getGates()[k].output] = randomTriplesArray[randomSharesOffset].first;
+            gateShareArr[circuit.getGates()[k].output] = get<0>(randomTriplesArray[randomSharesOffset]);
             randomSharesOffset++;
             count++;
         }
@@ -1695,6 +1982,12 @@ bool ProtocolParty<FieldType>::preparationPhase()
     return true;
 }
 
+template <class FieldType>
+void ProtocolParty<FieldType>::initializationPhase()
+{
+    gateShareArr.resize((M - circuit.getNrOfOutputGates())*2); // my share of the gate (for all gates)
+}
+
 //input s, share r, reconstruct r towards user, then user broadcasts s-r, so s-r + r = s
 template <class FieldType>
 void ProtocolParty<FieldType>::inputPhase()
@@ -1718,7 +2011,8 @@ void ProtocolParty<FieldType>::inputPhase()
                 //need to make sure random offsets sync up between active / inactive parties
                 FieldType s = field->GetElement(input); //s
                 vector<byte> sminusrbytes(field->getElementSizeInBytes());
-                field->elementToBytes(sminusrbytes.data(), s - output);
+                FieldType smo = s - output;
+                field->elementToBytes(sminusrbytes.data(), smo);
 
                 sendFromP1(sminusrbytes);
                 gateShareArr[circuit.getGates()[k].output] = randomShare + s - output;
@@ -1816,7 +2110,7 @@ void ProtocolParty<FieldType>::outputPhase()
                 return;
             }
             if(flag_print_output)
-                cout << "the result for "<< circuit.getGates()[k].input1 << " is : " << field->elementToString(interpolate(x1)) << '\n';
+                cout << "the result for "<< circuit.getGates()[k].input1 << " is : " << field->elementToString(interpolate(x1, N1)) << '\n';
 
 
             counter++;
@@ -1825,6 +2119,25 @@ void ProtocolParty<FieldType>::outputPhase()
 
     // close output file
     myfile.close();
+}
+
+template <class FieldType>
+void ProtocolParty<FieldType>::readMyInputs()
+{
+
+    //cout<<"inputs file" << inputsFile<<endl;
+    ifstream myfile;
+    long input;
+    int i =0;
+    myfile.open(inputsFile);
+    do {
+        myfile >> input;
+        myInputs[i] = input;
+        i++;
+    } while(!(myfile.eof()));
+    myfile.close();
+
+
 }
 
 template <class FieldType>
