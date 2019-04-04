@@ -24,11 +24,6 @@
 #include <algorithm>
 #include <utility>
 
-#define flag_print true
-#define flag_print_timings true
-#define flag_print_output true
-
-
 using namespace std;
 using namespace std::chrono;
 
@@ -406,6 +401,7 @@ void ProtocolParty<FieldType>::trimZeroes(vector<FieldType>& a) {
     a.resize(i);
 }
 
+template<class FieldType> 
 void ProtocolParty<FieldType>::polyAdd2(vector<FieldType>& a, vector<FieldType>& b, vector<FieldType>& sum) {
     vector<FieldType> tempSum(a);
     if(b.size() > a.size()) { tempSum.resize(b.size()); }

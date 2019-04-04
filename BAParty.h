@@ -22,11 +22,6 @@
 #include <emmintrin.h>
 #include <thread>
 
-#define flag_print false
-#define flag_print_timings true
-#define flag_print_output true
-
-
 using namespace std;
 using namespace std::chrono;
 
