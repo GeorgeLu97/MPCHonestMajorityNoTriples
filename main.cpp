@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include "ProtocolParty.h"
+#include "LinearParty.hpp"
 #include "BAParty.h"
 #include "ECC.h"
 #include "ZpKaratsubaElement.h"
@@ -68,7 +69,8 @@ int main(int argc, char* argv[])
 
     CmdParser parser;
     auto parameters = parser.parseArguments("", argc, argv);
-    int times = stoi(parser.getValueByKey(parameters, "internalIterationsNumber"));
+    int times =
+      stoi(parser.getValueByKey(parameters, "internalIterationsNumber"));
 
 
     string fieldType = parser.getValueByKey(parameters, "fieldType");
@@ -153,22 +155,26 @@ int main(int argc, char* argv[])
     else if(fieldType.compare("ZpMersenne61") == 0)
       {
         // testReconstruct<ZpMersenneLongElement>(poly, alph, result);
-        testReconstruct<ZpMersenneLongElement>(poly, alph, result);
+        LinearParty<ZpMersenneLongElement> protocol(argc, argv);
+        protocol.run();
       }
     else if(fieldType.compare("ZpKaratsuba") == 0)
       {
         // testReconstruct<ZpKaratsubaElement>(poly, alph, result);
-        testReconstruct<ZpKaratsubaElement>(poly, alph, result);
+        LinearParty<ZpKaratsubaElement> protocol(argc, argv);
+        protocol.run();
       }
     else if(fieldType.compare("GF2m") == 0)
       {
         // testReconstruct<GF2E>(poly, alph, result);
-        testReconstruct<GF2E>(poly, alph, result);
+        LinearParty<GF2E> protocol(argc, argv);
+        protocol.run();
       }
     else if(fieldType.compare("Zp") == 0)
       {
         // testReconstruct<ZZ_p>(poly, alph, result);
-        testReconstruct<ZZ_p>(poly, alph, result);
+        LinearParty<ZZ_p> protocol(argc, argv);
+        protocol.run();
       }
 	*/
 
