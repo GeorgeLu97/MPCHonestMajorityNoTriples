@@ -167,6 +167,9 @@ makeParties(){
   _parties =
     comm.setCommunication(io_service, _myId, _nActiveParties,
                           getArg("partiesFile"));
+
+  _activeMask.clear();
+  _activeMask.resize(_parties.size(), true);
   return;
 }
 
@@ -183,7 +186,7 @@ LinearParty(int argc, char* argv[])
   makeParties();
   
   // build _circuit
-  _circuit.readCircuit(getArg("circuitFile"));
+  _circuit.readCircuit( (getArg("circuitFile")).c_str() );
   _circuit.reArrangeCircuit();
   _input.resize(_circuit.getNrOfInputGates());
   _output.resize(_circuit.getNrOfOutputGates());
@@ -191,7 +194,6 @@ LinearParty(int argc, char* argv[])
   // build _inputSizes
   fillInputSizes(_myId, _parties.size() + 1, _circuit, _inputSizes);
   readInputFromFile(_input, getArg("inputFile"));
-
   return;
 }
 
@@ -207,6 +209,7 @@ void LinearParty<FieldType>::
 run(){
 
   auto start = high_resolution_clock::now();
+  
   runOffline();
   runOnline();
 
@@ -226,7 +229,7 @@ run(){
 template <class FieldType>
 void LinearParty<FieldType>::
 runOffline(){
-  
+  return;
 }
 
 template <class FieldType>
@@ -238,7 +241,7 @@ broadcastWorker(vector<byte>& msg,
     if (!_activeMask[i]) {
       continue;
     }
-
+    cout << "==== sending to party " << _parties[i]->getID() << endl;
     _parties[i]->getChannel()->write(msg.data(), msg.size());
   }
 }
@@ -274,6 +277,10 @@ template <class FieldType>
 void LinearParty<FieldType>::
 broadcastElements(vector<FieldType>& buffer,
                   int nElements, int rootId){
+
+  cout << "==== " << rootId <<  ": broadcasting " << nElements
+       << " elements ====" << endl;
+  
   vector<byte> msg;
   int nParties = _parties.size();
   int msgSize = _field->getElementSizeInBytes() * nElements;
@@ -314,7 +321,7 @@ broadcastElements(vector<FieldType>& buffer,
 template <class FieldType>
 void LinearParty<FieldType>::
 InputPhase(){
-  _wireValues.resize( _circuit.getNrOfGates() );
+    _wireValues.resize( _circuit.getNrOfGates() );
 
   // broadcast for all parties
   int nPartiesInc = _parties.size() + 1;
@@ -325,7 +332,7 @@ InputPhase(){
       // I'm the root
       receivedInputs[i].resize(curInputSize);
       for (int j = 0; j < curInputSize; j++) {
-        receivedInputs[j] = FieldType(_input[j]);
+        receivedInputs[i][j] = FieldType(_input[j]);
       }
     }
     broadcastElements(receivedInputs[i], curInputSize, i);
@@ -342,9 +349,10 @@ InputPhase(){
       int curParty = gates[i].party;
       int curOffset = offsets[ curParty ]++;
       _wireValues[ gates[i].output ] = receivedInputs[curParty][curOffset];
+      i++;
     }
   }
-
+  cout << "---- start Input Phase ----" << endl;
   return;
 }
 
@@ -352,13 +360,15 @@ InputPhase(){
 // -- TODO: currently just a stub: compute gates in clear
 template <class FieldType>
 void LinearParty<FieldType>::
-EvalPhase(){
+EvalPhase(){  
   const vector<TGate> gates = _circuit.getGates();
   for (auto g : gates) {
     switch (g.gateType) {
     case ADD :
+    case SCALAR_ADD :
       _wireValues[g.output] = _wireValues[g.input1] + _wireValues[g.input2];
       break;
+    case SCALAR :
     case MULT :
       _wireValues[g.output] = _wireValues[g.input1] * _wireValues[g.input2];
       break;
@@ -369,6 +379,8 @@ EvalPhase(){
       break;
     }
   }
+
+  cout << "---- finished Eval Phase ----" << endl;
 }
 
 // create random shares
@@ -386,17 +398,32 @@ RandomPhase(){
 template <class FieldType>
 void LinearParty<FieldType>::
 OutputPhase(){
-  
   int nOutputGates = _circuit.getNrOfOutputGates();
   const vector<TGate> gates = _circuit.getGates();
 
-  int i=0;
-  while (i < nOutputGates) {
-    if (gates[i].gateType == OUTPUT && gates[i].party == _myId) {
-      cout << _myId << " : output " << gates[i].output
-           << " is " << _wireValues[ gates[i].output ];
+  cout << "==== there are " << nOutputGates
+       << " output gates" << endl;
+
+  for (auto g : gates) {
+    if ((g.output == 8002 ||
+         g.output == 8001 ||
+         g.output == 5598 ||
+         g.output == 5599 ||
+         g.output == 7199 ||
+         g.output == 7200)
+        && _myId == 0) {
+      cout << _myId << " : wire " << g.output
+           << " is " << _wireValues[ g.output ] << endl;
+      
+    }
+
+    if (g.gateType == OUTPUT && g.party == _myId) {
+      cout << _myId << " : output " << g.input1
+           << " is " << _wireValues[ g.input1 ] << endl;
     }
   }
+
+  cout << "---- finished Output Phase ----" << endl;
   return;
 }
 
