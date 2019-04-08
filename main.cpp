@@ -106,7 +106,11 @@ int main(int argc, char* argv[])
 
     else if(fieldType.compare("Zp") == 0)
     {
+    	
+    	cout << "FieldType Zp" << endl;
         ProtocolParty<ZZ_p> protocol(argc, argv);
+
+        cout << "ProtocolParty Init" << endl;
 
         auto t1 = high_resolution_clock::now();
 

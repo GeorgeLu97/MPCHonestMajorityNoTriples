@@ -311,6 +311,8 @@ public:
 template <class FieldType>
 ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("PerfectlySecureLinearCommunication", argc, argv)
 {
+    cout << "Start Constructor" << endl;
+    
     string circuitFile = this->getParser().getValueByKey(arguments, "circuitFile");
     this->times = stoi(this->getParser().getValueByKey(arguments, "internalIterationsNumber"));
     string fieldType = this->getParser().getValueByKey(arguments, "fieldType");
@@ -323,6 +325,8 @@ ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("Perf
 
     vector<string> subTaskNames{"Offline", "preparationPhase", "Online", "inputPhase", "ComputePhase", "outputPhase"};
     timer = new Measurement(*this, subTaskNames);
+
+    cout << "Fin Parsing" << endl;
 
     if(fieldType.compare("ZpMersenne") == 0) {
         field = new TemplateField<FieldType>(2147483647);
@@ -372,6 +376,8 @@ ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("Perf
         else { activeParties.push_back(parties[i-1]); }
     }
 
+    cout << "ActiveParties" << endl;
+
     string tmp = "init times";
     //cout<<"before sending any data"<<endl;
     byte tmpBytes[20];
@@ -384,7 +390,6 @@ ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("Perf
             parties[i]->getChannel()->write(tmp);
         }
     }
-
 
     readMyInputs();
 
@@ -1275,8 +1280,16 @@ bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vecto
         d2shareallbytes[i].resize(eltSize);
     }
 
+    cout << "doubleShareRandom - Sync1" << endl;
+
     roundFunctionSync(d1sharebytes, d1shareallbytes, 14);
+
+    cout << "doubleShareRandom - Sync1 - 0.5" << endl;
+
     roundFunctionSync(d2sharebytes, d2shareallbytes, 15);
+
+    cout << "doubleShareRandom - Sync1 - Complete" << endl;
+
 
     vector<FieldType> d1shareall(N1);
     vector<FieldType> d2shareall(N1);
@@ -1642,6 +1655,7 @@ pair<int,int> ProtocolParty<FieldType>::doubleShareRandomVerifyAll(int degree1, 
 template <class FieldType>
 void ProtocolParty<FieldType>::generateTriples(vector<tuple<FieldType, FieldType, FieldType>>& randomTriples) {
     while(selfActive) {
+        cout << "Triple Attempt" << endl;
         vector<tuple<FieldType, FieldType>> a;
         vector<tuple<FieldType, FieldType>> b;
         vector<tuple<FieldType, FieldType>> r;
@@ -1655,6 +1669,9 @@ void ProtocolParty<FieldType>::generateTriples(vector<tuple<FieldType, FieldType
         ) {
             continue;
         }
+
+        cout << "Doubles Generated" << endl;
+
         for(int i = 0; i < a.size(); i++) {
             d.push_back(get<1>(a[i]) * get<1>(b[i]) - get<1>(r[i]));
         }
@@ -1883,9 +1900,11 @@ void ProtocolParty<FieldType>::run() {
 
         auto t1start = high_resolution_clock::now();
         timer->startSubTask("Offline", iteration);
+        cout << "Offline" << endl;
         runOffline();
         timer->endSubTask("Offline", iteration);
         timer->startSubTask("Online", iteration);
+        cout << "Online" << endl;
         runOnline();
         timer->endSubTask("Online", iteration);
 
@@ -1977,6 +1996,7 @@ bool ProtocolParty<FieldType>::preparationPhase()
     circuit.getNrOfMultiplicationGates() + circuit.getNrOfRandomGates();
     for(int gS = 0; gS < triplesNeeded; gS += bigT) {
         generateTriples(randomTriplesArray);
+        cout << "Triples Generated: " << gS << endl;
     }
 
     return true;
