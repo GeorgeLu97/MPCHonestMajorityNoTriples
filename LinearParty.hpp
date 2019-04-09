@@ -438,10 +438,10 @@ robustBatchBroadcast(vector<FieldType>& sendElms, // input
 
 // fill a list of partyIds with inputs.
 // also return the minimum number of input amoung them
-// TODO: add a maximum such that minInput <= maximum
 static inline int
 collectInputIds(vector<int> &inputSizes,
-                vector<int> &inputParties) {
+                vector<int> &inputParties,
+                int maxBatch) {
 
   int nPartiesInc = inputSizes.size();
   
@@ -457,7 +457,7 @@ collectInputIds(vector<int> &inputSizes,
 
   
   // -- fill the list of Ids, and record minInputs.
-  int minInputs = inputSizes[firstInputParty];
+  int minInputs = maxBatch;
   for (int i = firstInputParty; i < nPartiesInc; i++) {
     if (inputSizes[i] > 0) {
       inputParties.push_back(i);
@@ -499,19 +499,25 @@ void LinearParty<FieldType>::
 InputPhase(){
     _wireValues.resize( _circuit.getNrOfGates() );
   int nPartiesInc = _parties.size() + 1;
-
+  int smallT = _nActiveParties / 3;
+  int bigT = _nActiveParties - 2*smallT;
+  cout << "bigT is " << bigT << endl;
+  
   // batch share inputs until all inputs are shared
   vector< vector<FieldType> > receivedInputs(nPartiesInc);
   vector<int> inputParties;
   vector<int> inputsToSend = _inputSizes;
-  int minInputs = collectInputIds(inputsToSend, inputParties);
+  int minInputs = collectInputIds(inputsToSend, inputParties, bigT);
   auto inputHead = _input.begin();
   while(minInputs > 0){
+    cout << "sending " << minInputs << " inputs" << endl;
+    
     vector<FieldType> batchInput(inputHead, inputHead+minInputs);
     inputHead += minInputs;
     vector< vector<FieldType> > batchRecvInput;
     robustBatchBroadcast(batchInput, batchRecvInput, minInputs, inputParties);
     storeRecvDealerInputs(receivedInputs, batchRecvInput, inputParties);
+    minInputs = collectInputIds(inputsToSend, inputParties, bigT);
   }
 
 
