@@ -187,7 +187,11 @@ dividePolynomial(vector<FieldType>& p1,
     r = p1;
     return;
   }
-  
+  if (p2Size == 0) {
+    cerr << "ECC: dividing by zero (polynomail)" << endl;
+    abort();
+  }
+
   int qSize = p1Size - p2Size +1;
   q.resize(qSize);
 
@@ -391,16 +395,16 @@ reconstruct(vector<FieldType>& alpha, // input x of size n
   int minDeg = (nCodes + nMessages +1)/2;
 
   vector<FieldType> u, v, g, r;
-  // find u*g0 + v*g1 = r, with deg(r) < minDeg
+  // find u*g0 + v*g1 = g, with deg(g) < minDeg
   extendedEuclideanPartial(g0, g1, u, v, g, minDeg);
 
-  cout << "finished extended Euclidean Partial " << endl;
-  cout << "u is :";
-  printPolynomial(u);
-  cout << "v is :";
-  printPolynomial(v);
-  cout << "g is :";
-  printPolynomial(g);
+  /* cout << "finished extended Euclidean Partial " << endl; */
+  /* cout << "u is :"; */
+  /* printPolynomial(u); */
+  /* cout << "v is :"; */
+  /* printPolynomial(v); */
+  /* cout << "g is :"; */
+  /* printPolynomial(g); */
   
   // find f*v + r = g
   dividePolynomial(g, v, polynomial, r);
