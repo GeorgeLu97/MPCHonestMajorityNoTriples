@@ -63,9 +63,14 @@ private:
   int _nThread;
   ArithmeticCircuit _circuit;
   TemplateField<FieldType>*_field;
+  
   // _alpha[i] is the field element of the party with id = i.
-  // every party has the same _alpha.
+  // Note: every party has the same _alpha.
+  //  ..   Same with _inputSizes
   vector<FieldType> _alpha;
+  vector<int> _inputSizes;
+
+  // subprotocol classes
   BAParty<FieldType> _baParty;
   ECC<FieldType> _ecc;
 
@@ -73,10 +78,8 @@ private:
   vector< shared_ptr<ProtocolPartyData> > _parties;
   vector<bool> _activeMask;
   
-  
   // only store long value (not FieldType) to save memory
-  vector<int> _inputSizes;
-  vector<long> _input;
+  vector<FieldType> _input;
   vector<long> _output;
 
 
@@ -85,16 +88,19 @@ private:
   // ---- helper funtions ----
   inline string getArg(string argKey)
   { return this->getParser().getValueByKey(this->arguments, argKey); }
-  void makeField();
-  void makeParties();
-  void makeAlpha();
-
   void encodeFieldElts(vector<FieldType>& input, vector<byte>& output);
   void encodeFieldElt(FieldType& input, vector<byte>& output);
   void decodeFieldElts(vector<byte>& input, vector<FieldType>& output);
   void decodeFieldElt(vector<byte>& input, FieldType& output);
+  void readInputFromFile(string fileName);
 
+  // initialization funtions
+  void makeField();
+  void makeParties();
+  void makeAlpha();
 
+  // expand polynomial to n evaluations. Encode each into messages
+  // also return the evaluation on my own alpha.
   FieldType prepareExpandedMsgs(vector<FieldType>& polynomial,
                                 vector< vector<byte> >& expandedMsgs);
   // Broadcast (each dealer (k intotal) spreads T values)
@@ -103,8 +109,8 @@ private:
   // -- Run BroadcastForP() for k values (1 from each dealer)
   // -- Every player reconstruct T values for each dealer w/ ECC
   void robustBatchBroadcast(vector<FieldType>& sendElms,
-                            vector< vector<FieldType>& > recvElms,
-                            int nElements,  vector<int> dealerIds);
+                            vector< vector<FieldType> >& recvElms,
+                            int nElements,  vector<int>& dealerIds);
 
   // ---- main subprotocols ----
 
@@ -134,15 +140,18 @@ public:
     
 };
 
-static inline void 
-readInputFromFile(vector<long>& input, string fileName){
+template<class FieldType>
+void LinearParty<FieldType>::
+readInputFromFile(string fileName){
 
   ifstream inputFile(fileName);
-  int inputSize = input.size();
+  int inputSize = _input.size();
+  long curInput;
 
   // read available inputs to fill _input
   for(int i=0; i< inputSize && !(inputFile.eof()); i++){
-    inputFile >> input[i];
+    inputFile >> curInput;
+    _input[i] = _field->GetElement(curInput);
   }
   return;
 }
@@ -237,7 +246,7 @@ LinearParty(int argc, char* argv[])
   
   // build _inputSizes
   fillInputSizes(_myId, _parties.size() + 1, _circuit, _inputSizes);
-  readInputFromFile(_input, getArg("inputFile"));
+  readInputFromFile(getArg("inputFile"));
   return;
 }
 
@@ -350,8 +359,8 @@ prepareExpandedMsgs(vector<FieldType>& polynomial,
   expandedMsgs.resize(nParties);
   for (int j = 0; j < nParties; j++) {
     FieldType currentPartyAlpha = _alpha[ _parties[j]->getID() ];
-    encodeFieldElt( _ecc.evalPolynomial(currentPartyAlpha, polynomial),
-                    expandedMsgs[j]);
+    FieldType currentEval = _ecc.evalPolynomial(currentPartyAlpha, polynomial);
+    encodeFieldElt( currentEval, expandedMsgs[j]);
   }
 
   FieldType myAlpha = _alpha[ _myId ];
@@ -364,12 +373,12 @@ prepareExpandedMsgs(vector<FieldType>& polynomial,
 // -- Every dealer distribute 1 value to each party
 // -- Run BroadcastForP() for k values (1 from each dealer)
 // -- Every player reconstruct T values for each dealer w/ ECC
-// -- TODO: implement
+// -- note that we must have T > n - 2t.
 template <class FieldType>
 void LinearParty<FieldType>::
 robustBatchBroadcast(vector<FieldType>& sendElms, // input
-                     vector< vector<FieldType>& > recvElms, // output
-                     int nElements,  vector<int> dealerIds){
+                     vector< vector<FieldType> >& recvElms, // output
+                     int nElements,  vector<int>& dealerIds){
   // sort dealerIds. 
   int nParties = _parties.size();
   int nDealers = dealerIds.size();
@@ -427,6 +436,58 @@ robustBatchBroadcast(vector<FieldType>& sendElms, // input
   return;
 }
 
+// fill a list of partyIds with inputs.
+// also return the minimum number of input amoung them
+// TODO: add a maximum such that minInput <= maximum
+static inline int
+collectInputIds(vector<int> &inputSizes,
+                vector<int> &inputParties) {
+
+  int nPartiesInc = inputSizes.size();
+  
+  // -- find first party with input
+  int firstInputParty = 0;
+  while (firstInputParty < nPartiesInc &&
+         inputSizes[firstInputParty] == 0) {
+    firstInputParty++;
+  }
+  if (firstInputParty == nPartiesInc) {
+    return 0;
+  }// else, found the first party with input
+
+  
+  // -- fill the list of Ids, and record minInputs.
+  int minInputs = inputSizes[firstInputParty];
+  for (int i = firstInputParty; i < nPartiesInc; i++) {
+    if (inputSizes[i] > 0) {
+      inputParties.push_back(i);
+      minInputs = min(minInputs, inputSizes[i]);
+    }
+  }
+  
+  // -- remove minInput from all
+  for (int i = firstInputParty; i < nPartiesInc; i++) {
+    if (inputSizes[i] > 0) {
+      inputSizes[i] -= minInputs;
+    }
+  }
+  return minInputs;
+}
+
+template <class FieldType>
+static inline void
+storeRecvDealerInputs(vector<FieldType>& totalInputs,
+                      vector<FieldType>& dealerInputs,
+                      const vector<int>& dealerIds) {
+  int nDealers = dealerIds.size();
+  for (int i = 0; i < nDealers; i++) {
+    totalInputs[ dealerIds[i] ].insert( totalInputs[ dealerIds[i] ].end(),
+                                      dealerInputs[i].begin(),
+                                      dealerInputs[i].end() );
+  }
+  return;
+}
+
 // From BTH08 Appendex: batch input sharing (K dealers each T inputs)
 // -- assuming everyone already have enough random sharings
 // -- For K*T times: ReconsPriv() a random share to corresponding Dealer.
@@ -437,21 +498,22 @@ template <class FieldType>
 void LinearParty<FieldType>::
 InputPhase(){
     _wireValues.resize( _circuit.getNrOfGates() );
-
-  // broadcast for all parties
   int nPartiesInc = _parties.size() + 1;
+
+  // batch share inputs until all inputs are shared
   vector< vector<FieldType> > receivedInputs(nPartiesInc);
-  for(int i=0; i<nPartiesInc; i++){
-    int curInputSize = _inputSizes[i];
-    if (_myId == i) {
-      // I'm the root
-      receivedInputs[i].resize(curInputSize);
-      for (int j = 0; j < curInputSize; j++) {
-        receivedInputs[i][j] = FieldType(_input[j]);
-      }
-    }
-    broadcastElements(receivedInputs[i], curInputSize, i);
+  vector<int> inputParties;
+  vector<int> inputsToSend = _inputSizes;
+  int minInputs = collectInputIds(inputsToSend, inputParties);
+  auto inputHead = _input.begin();
+  while(minInputs > 0){
+    vector<FieldType> batchInput(inputHead, inputHead+minInputs);
+    inputHead += minInputs;
+    vector< vector<FieldType> > batchRecvInput;
+    robustBatchBroadcast(batchInput, batchRecvInput, minInputs, inputParties);
+    storeRecvDealerInputs(receivedInputs, batchRecvInput, inputParties);
   }
+
 
   // plug in input values
   int nInputGates = _circuit.getNrOfInputGates();
@@ -467,7 +529,7 @@ InputPhase(){
       i++;
     }
   }
-  cout << "---- start Input Phase ----" << endl;
+  cout << "---- finished Input Phase ----" << endl;
   return;
 }
 
