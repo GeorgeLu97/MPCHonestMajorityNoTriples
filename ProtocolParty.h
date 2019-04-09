@@ -1880,7 +1880,6 @@ int ProtocolParty<FieldType>::processNotMult(){
 /*   BA.setHIM(matrix_him); */
 /*   BA.setAlphaBeta(alpha, alpha); */
 /*   BA.setDealers(vector<int>(1, 0)); */
-/*   //BA.setSmallT(T); */
 
 /*   // test consensus() - in progress */
 /*   BA.setNumThreads(2); */
