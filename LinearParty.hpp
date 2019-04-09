@@ -15,6 +15,7 @@
 #include <libscapi/include/primitives/Mersenne.hpp>
 #include "ProtocolTimer.h"
 #include "ECC.h"
+#include "BAParty.h"
 #include <libscapi/include/comm/MPCCommunication.hpp>
 #include <libscapi/include/infra/Common.hpp>
 // #include <libscapi/include/primitives/Prg.hpp>
@@ -27,15 +28,12 @@ using namespace std::chrono;
 
 // Plan: adapt & test existing code by George bit by bit.
 //
-// - circuit reading/ calculation
-// - BA broadcast and (batch) Input sharing
 // - 4 consistency functionality
 //
 // - reconstruction
 // - fault localization
 // - player elimination
 //
-// - a running protocol (with overall procedure =eval()=)
 // - performance testing
 // - (trivial) malicious party
 // - optimizations
@@ -57,6 +55,7 @@ private:
   int _nThread;
   ArithmeticCircuit _circuit;
   TemplateField<FieldType>*_field;
+  BAParty<FieldType> _baParty;
 
   // manage active/inactive parties by a mask
   vector< shared_ptr<ProtocolPartyData> > _parties;
@@ -80,11 +79,10 @@ private:
   void encodeFieldElts(vector<FieldType>& input, vector<byte>& output);
   void decodeFieldElts(vector<byte>& input, vector<FieldType>& output);  
 
-  void broadcastWorker(vector<byte>& msg, int threadId, int nThreads);
-  void broadcastElements(vector<FieldType>& buffer,
-                         int nElements, int rootId);
 
   // ---- main subprotocols ----
+
+  // From BTH08 Appendex: batch input sharing (K dealers each T inputs)
   void InputPhase();
   void RandomPhase();
   void EvalPhase();
@@ -103,6 +101,9 @@ public:
   void runOnline() override;
 
   // ======== testing functionalities ========
+  void broadcastElements(vector<FieldType>& buffer,
+                         int nElements, int rootId);
+
   vector<FieldType> _wireValues;
     
 };
@@ -184,6 +185,11 @@ LinearParty(int argc, char* argv[])
   _nThread = stoi(getArg("numThreads"));
   makeField();
   makeParties();
+
+  // initialize subprotocol classes
+  _baParty.setParties(_parties, _myId);
+  _baParty.setNumThreads(_nThread);
+  
   
   // build _circuit
   _circuit.readCircuit( (getArg("circuitFile")).c_str() );
@@ -234,20 +240,6 @@ runOffline(){
 
 template <class FieldType>
 void LinearParty<FieldType>::
-broadcastWorker(vector<byte>& msg,
-                int threadId, int nThreads) {
-  int nParties = _parties.size();
-  for (int i = threadId; i < nParties; i += nThreads) {
-    if (!_activeMask[i]) {
-      continue;
-    }
-    cout << "==== sending to party " << _parties[i]->getID() << endl;
-    _parties[i]->getChannel()->write(msg.data(), msg.size());
-  }
-}
-
-template <class FieldType>
-void LinearParty<FieldType>::
 encodeFieldElts(vector<FieldType>& input, vector<byte>& output){
   int fieldByteSize = _field->getElementSizeInBytes();
   output.resize(fieldByteSize * input.size());
@@ -260,7 +252,9 @@ template <class FieldType>
 void LinearParty<FieldType>::
 decodeFieldElts(vector<byte>& input, vector<FieldType>& output){
   int fieldByteSize = _field->getElementSizeInBytes();
-  // if(input.size() % fieldByteSize) { cout << "input byte misalignment" << endl; }
+  // if(input.size() % fieldByteSize) {
+  //   cout << "input byte misalignment" << endl;
+  // }
   output.resize(input.size() / fieldByteSize);
 
   for(int j = 0; j < output.size(); j++) {
@@ -289,26 +283,10 @@ broadcastElements(vector<FieldType>& buffer,
     // I'm the sender
     encodeFieldElts(buffer, msg);
     msg.resize(msgSize);
-    
-    vector<thread> threads(_nThread);
-    for (int i = 0; i < _nThread; i++) {
-      threads[i] = thread(&LinearParty::broadcastWorker, this,
-                          ref(msg), i, _nThread);
-    }
-    for(int i=0; i<_nThread; i++){
-      threads[i].join();
-    }
-    
+    _baParty.broadcastMsg(msg, msgSize, rootId);
   } else {
     // I'm a receiver
-    msg.resize(msgSize);
-    for (int i = 0; i < nParties; i++) {
-      if (!_activeMask[i] ||
-          _parties[i]->getID() != rootId) {
-        continue;
-      }
-      _parties[i]->getChannel()->read(msg.data(), msg.size());
-    }
+    _baParty.broadcastMsg(msg, msgSize, rootId);
     decodeFieldElts(msg, buffer);
   }
   return;
@@ -316,8 +294,12 @@ broadcastElements(vector<FieldType>& buffer,
 
 
 
-// share inputs
-// -- TODO: currently just a stub: share inputs in the clear
+// From BTH08 Appendex: batch input sharing (K dealers each T inputs)
+// -- assuming everyone already have enough random sharings
+// -- For K*T times: ReconsPriv() a random share to corresponding Dealer.
+// -- Each Dealer computes T differences
+// -- All dealers broadcast its T differences
+// -- Each party locally compute input shares
 template <class FieldType>
 void LinearParty<FieldType>::
 InputPhase(){
@@ -394,7 +376,6 @@ RandomPhase(){
 
 
 // reconstruct outputs
-// -- TODO: currently just a stub: do nothing.
 template <class FieldType>
 void LinearParty<FieldType>::
 OutputPhase(){

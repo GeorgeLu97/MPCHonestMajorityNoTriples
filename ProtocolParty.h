@@ -1948,6 +1948,25 @@ int ProtocolParty<FieldType>::processNotMult(){
 
 }
 
+/* template <class FieldType> */
+/* void ProtocolParty<FieldType>::run() { */
+/*   cout << "================= test BA ===================" << endl; */
+/*   BAParty<FieldType> BA; */
+/*   BA.setParties(parties, m_partyId); */
+  
+/*   // not interesting for now, just a sanity check */
+/*   BA.setHIM(matrix_him); */
+/*   BA.setAlphaBeta(alpha, alpha); */
+/*   BA.setDealers(vector<int>(1, 0)); */
+
+/*   // test consensus() - in progress */
+/*   BA.setNumThreads(2); */
+/*   // bool result = BA.consensus_base( m_partyId % 2 == 0 ); */
+/*   bool result = BA.consensus(true); */
+/*   cout << "p" << m_partyId << ": consensus result is " << result << endl; */
+/*   return; */
+/* } */
+
 template <class FieldType>
 void ProtocolParty<FieldType>::run() {
 
