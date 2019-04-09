@@ -25,18 +25,13 @@
 using namespace std;
 using namespace std::chrono;
 
-
 // Questions:
 // 1. Is ``run in parallel'' different from ``run in batch''?
-//    -- for now, run in sequence.
-// 3. Error checking during protocol (e.g. timeout communication?)
-// 4. How to agree on a constant HIM matrix?
-// 6. count ``received bits'' includes my own bit?
-
+// 2. count ``received bits'' includes my own bit?
 
 // Functionality 1: concensus protocol by BGP92
 // Functionality 2: broadcast protocol by CW92
-// Functionality 3: Robust batched broadcast in Appendex of BTH
+// -- ^^ Currently not implemented. Assuming a broadcast channel
 template <class FieldType>
 class BAParty{
   
@@ -47,7 +42,6 @@ private:
   int _nThread;
   int _basePartyCount = 3;
   int _nActiveParties;
-  vector<bool> _dealersMask;    // mask to dealers
   vector<bool> _activeMask;     // mask to active players
   vector< shared_ptr<ProtocolPartyData> > _partySocket; // for communication
   vector<FieldType> _alpha;  // <-- the commonly known elements to all
@@ -59,15 +53,22 @@ private:
   void printActiveParties();
   void printCommitee(vector<char>& commitee_mask, int myCommitee);
 
-  // used in base Phase King
+  // worker functions for multi-threading
   void exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
-                         int threadID, int nThreads);
-  void exchangeBit(bool sendBit, vector<bool>& recvBits);
+                         int threadId, int nThreads);
+  void exchangeMsgWorker(vector<byte>& sendMsg,
+                         vector< vector<byte> >& recvMsgs,
+                         int msgSize, int threadId, int nThreads);
+  void scatterMsgWorker(vector< vector<byte> >& sendMsgs,
+                        int msgSize, int threadId, int nThread);
   void spreadBitWorker(bool sendBit, int threadId, int nThreads);
-  void gatherBitWorker(vector<bool>& sendBit, int threadId, int nThreads);
-  bool spreadBit(bool sendBit, int kingId);
   void spreadMsgWorker(vector<byte>& msg, int threadId, int nThreads);
+  void gatherBitWorker(vector<bool>& recvBit, int threadId, int nThreads);
   
+
+  // used in base Phase King
+  bool spreadBit(bool sendBit, int kingId);
+  void exchangeBit(bool sendBit, vector<bool>& recvBits);
   bool universal_rounds(bool b, int* D,
                         vector<bool>& buffer, vector<bool>& buffer2);
 
@@ -83,16 +84,6 @@ private:
                         int myCommitee, vector<bool>& receivedBits);
 
 
-  // -------- private functionalities (sub-protocols) --------
-  // each player broadcast a single element
-  // detectable broadcast: return false if not successfull
-  bool peBroadcast(FieldType elem, // input
-                   vector<FieldType>& received_elems);
-
-  // BroadcastForP (each player spreads l values)
-  void broadcastForAll(vector<FieldType>& input_elems, // input
-                       vector< vector<FieldType> >& output_elems);
-
 public:
   // constructor and destructors
   BAParty();
@@ -102,7 +93,6 @@ public:
   void setParties(vector< shared_ptr<ProtocolPartyData> >& parties, int myId);
   void setHIM(HIM<FieldType>& common_HIM);
   void setAlphaBeta(vector<FieldType>& alpha, vector<FieldType>& beta);
-  void setDealers(const vector<int>& dealers);
   void setNumThreads(int numThreads);
   void getRemainingParties(vector< shared_ptr<ProtocolPartyData> >& parties);
 
@@ -114,49 +104,14 @@ public:
   // trivial from consensus(): first dealer spread bit, then run consensus().
   void broadcastBit(bool& b, int rootId);
   void broadcastMsg(vector<byte>& msg, int msgSize, int rootId);
+  void scatterMsg(vector< vector<byte> >& sendMsgs,
+                  vector<byte>& recvMsg, int msgSize, int rootId);
+  void broadcastMsgForAll(vector<byte>& sendMsg, // input
+                          vector< vector<byte> >& recvMsgs,
+                          int msgSize);
 
-  // Broadcast (each dealer (k intotal) spreads T values)
-  // -- Every dealer expand T values into n by interpolating
-  // -- Every dealer distribute 1 value to each party
-  // -- Run BroadcastForP() for k values (1 from each dealer)
-  // -- Every player reconstruct T values for each dealer w/ ECC
-  void robustBatchBroadcast(vector<FieldType>& elems, bool isDealer);
 };
 
-
-// -------- private functions --------
-
-// TODO from Appendex A. in BTH paper:
-// PE_Broadcast (each player spreads 1 value)
-// -- Every party P_i sends x_i to every P_j
-// -- Every party P_i computes (x''_1, ..., x''_n) = M(x'_1, ..., x'_n)
-// -- Every party P_i sends x''_i to evey P_j
-// -- Every party P_i checks if the received values are equal
-// -- Every party outputs received x_1, ..., x_n
-// returns happy bit.
-template <class FieldType>
-bool BAParty<FieldType>::
-peBroadcast(FieldType elem, // input
-            vector<FieldType>& received_elems){
-  return true;
-  
-}
-
-
-
-// TODO: currently a stub: simply send all-to-all
-// TODO: real implementation : broadcastForP() in BTH08 Appendix
-template <class FieldType>
-void BAParty<FieldType>::
-broadcastForAll(vector<FieldType>& input_elems, // input
-                vector< vector<FieldType> >& output_elems){
-
-  
-
-
-  
-  return;
-}
 
 // -------- constructor & destructor --------
 // constructor and destructors
@@ -180,8 +135,6 @@ setParties(vector< shared_ptr<ProtocolPartyData> >& parties, int myId){
   // calculate defult number of advarseries
   
   // set default masks
-  _dealersMask.clear();
-  _dealersMask.resize(nParties, false);
   _activeMask.clear();
   _activeMask.resize(nParties, true);
   _nActiveParties = nParties +1; // counting myself
@@ -205,17 +158,6 @@ setAlphaBeta(vector<FieldType>& alpha, vector<FieldType>& beta){
   return;
 }
 
-template <class FieldType>
-void BAParty<FieldType>::
-setDealers(const vector<int>& dealers){
-  _dealersMask.clear();
-  _dealersMask.resize( _partySocket.size(), false );
-  for(auto d : dealers){
-    // assert(d < _partySocket.size());
-    _dealersMask[d] = true;
-  }
-  return;
-}
 
 template <class FieldType>
 void BAParty<FieldType>::
@@ -239,6 +181,7 @@ getRemainingParties(vector< shared_ptr<ProtocolPartyData> >& parties){
   parties = activeParties;
   return;
 }
+
 
 
 // thread worker function
@@ -321,12 +264,12 @@ spreadBitWorker(bool sendBit,
 template <class FieldType>
 void BAParty<FieldType>::
 gatherBitWorker(vector<bool>& recvBits,
-                int threadId, int nThreads){
+                int threadId, int nThread){
 
   int nParties = _partySocket.size();
   vector<char> recvBytes(nParties);
   // communicate with other parties
-  for(int i=threadId; i<nParties; i+=nThreads){
+  for(int i=threadId; i<nParties; i+=nThread){
     if(!_activeMask[i]){
       // skip inactive (eliminated) parties
       continue;
@@ -336,12 +279,33 @@ gatherBitWorker(vector<bool>& recvBits,
   }
 
   // convert messages into bits
-  for(int i=threadId; i<nParties; i+=nThreads){
+  for(int i=threadId; i<nParties; i+=nThread){
     if(!_activeMask[i]){
       continue;
     }
     recvBits[i] = (recvBytes[i] == 1);
   }
+  return;
+}
+
+
+template <class FieldType>
+void BAParty<FieldType>::
+scatterMsgWorker(vector< vector<byte> >& sendMsgs,
+                 int msgSize, int threadId, int nThread){
+
+  int nParties = _partySocket.size();
+
+  // communicate with other parties
+  for(int i=threadId; i<nParties; i+=nThread){
+    if(!_activeMask[i]){
+      // skip inactive (eliminated) parties
+      continue;
+    }
+    sendMsgs[i].resize(msgSize);
+    _partySocket[i]->getChannel()->write(sendMsgs[i].data(), msgSize);
+  }
+
   return;
 }
 
@@ -673,8 +637,60 @@ spreadMsgWorker(vector<byte>& msg,
   }
 }
 
+template <class FieldType>
+void BAParty<FieldType>::
+exchangeMsgWorker(vector<byte>& sendMsg,
+                  vector< vector<byte> >& recvMsgs,
+                  int msgSize, int threadId, int nThreads){
 
-// TODO: currently a stub: simply send to all
+  int nParties = _partySocket.size();
+  recvMsgs.clear();
+  recvMsgs.resize(nParties, vector<byte>(msgSize));
+
+  for (int i = threadId; i < nParties; i += nThreads) {
+    if (!_activeMask[i]) {
+      continue;
+    }
+
+    if (_myId < _partySocket[i]->getID()) {
+      // write before read
+      _partySocket[i]->getChannel()->write(sendMsg.data(), msgSize);
+      _partySocket[i]->getChannel()->read(recvMsgs[i].data(), msgSize);
+    } else {
+      // read before write
+      _partySocket[i]->getChannel()->read(recvMsgs[i].data(), msgSize);
+      _partySocket[i]->getChannel()->write(sendMsg.data(), msgSize);
+    }
+  }
+
+  return;
+}
+
+
+// TODO: real implementation: broadcastForP() in BTH08 Appendix
+// -- Note: will need to also implement peBroadcast()
+// -- currently a stub: simply send all-to-all
+template <class FieldType>
+void BAParty<FieldType>::
+broadcastMsgForAll(vector<byte>& sendMsg, // input
+                   vector< vector<byte> >& recvMsgs, int msgSize){
+  
+  vector<thread> threads(_nThread);
+  sendMsg.resize(msgSize);
+  for(int i=0; i<_nThread; i++){
+    threads[i] = thread(&BAParty::exchangeMsgWorker, this,
+                        ref(sendMsg), ref(recvMsgs), msgSize, i, _nThread);
+  }
+
+  for(int i=0; i<_nThread; i++){
+    threads[i].join();
+  }
+  return;
+}
+
+
+// TODO: read implementation: CW92 or check other paper
+// -- currently a stub: simply send to all
 template <class FieldType>
 void BAParty<FieldType>::
 broadcastMsg(vector<byte>& msg, int msgSize, int rootId){
@@ -706,17 +722,39 @@ broadcastMsg(vector<byte>& msg, int msgSize, int rootId){
   return;
 }
 
-// Broadcast (each dealer (k intotal) spreads T values)
-// -- Every dealer expand T values into n by interpolating
-// -- Every dealer distribute 1 value to each party
-// -- Run BroadcastForP() for k values (1 from each dealer)
-// -- Every player reconstruct T values for each dealer w/ ECC
-// -- TODO: implement
 template <class FieldType>
 void BAParty<FieldType>::
-robustBatchBroadcast(vector<FieldType>& elems, bool isDealer){
+scatterMsg(vector< vector<byte> >& sendMsgs,
+           vector<byte>& recvMsg, int msgSize, int rootId){
+  int nParties = _partySocket.size();
+  
+  if (rootId == _myId) {
+    // I'm the sender
+    sendMsgs.resize(_partySocket.size());
+    vector<thread> threads(_nThread);
+    for (int i = 0; i < _nThread; i++) {
+      threads[i] = thread(&BAParty::scatterMsgWorker, this,
+                          ref(sendMsgs), msgSize, i, _nThread);
+    }
+    for (int i = 0; i < _nThread; i++) {
+      threads[i].join();
+    }
+
+  } else {
+    // I'm a receiver
+    recvMsg.resize(msgSize);
+    for (int i = 0; i < nParties; i++) {
+      if (!_activeMask[i] ||
+          _partySocket[i]->getID() != rootId) {
+        continue;
+      }
+      _partySocket[i]->getChannel()->read(recvMsg.data(), msgSize);
+    }
+  }
   return;
 }
+
+
 
 
 #endif /* BAPARTY_H_ */

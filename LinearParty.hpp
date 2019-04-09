@@ -40,10 +40,18 @@ using namespace std::chrono;
 //
 
 // TODO:
-// 1. use broadcast functionality from BAParty
+// 1. change all FieldType(n) to _field->getElement(n);
+// -- GF2E will not properly initialize!!
+// -- also do this for ECC.h and BAParty.h
+// -- need to add _field member for them too.
 // 2. 4 consistency functionality
 // 3. reconstruction
 // 4. fault localization
+
+// Questions:
+// 1. Error checking during protocol (e.g. timeout communication?)
+// 2. How to agree on a constant HIM matrix?
+
 template <class FieldType>
 class LinearParty : public Protocol, public HonestMajority, MultiParty{
   
@@ -55,7 +63,11 @@ private:
   int _nThread;
   ArithmeticCircuit _circuit;
   TemplateField<FieldType>*_field;
+  // _alpha[i] is the field element of the party with id = i.
+  // every party has the same _alpha.
+  vector<FieldType> _alpha;
   BAParty<FieldType> _baParty;
+  ECC<FieldType> _ecc;
 
   // manage active/inactive parties by a mask
   vector< shared_ptr<ProtocolPartyData> > _parties;
@@ -75,10 +87,24 @@ private:
   { return this->getParser().getValueByKey(this->arguments, argKey); }
   void makeField();
   void makeParties();
+  void makeAlpha();
 
   void encodeFieldElts(vector<FieldType>& input, vector<byte>& output);
-  void decodeFieldElts(vector<byte>& input, vector<FieldType>& output);  
+  void encodeFieldElt(FieldType& input, vector<byte>& output);
+  void decodeFieldElts(vector<byte>& input, vector<FieldType>& output);
+  void decodeFieldElt(vector<byte>& input, FieldType& output);
 
+
+  FieldType prepareExpandedMsgs(vector<FieldType>& polynomial,
+                                vector< vector<byte> >& expandedMsgs);
+  // Broadcast (each dealer (k intotal) spreads T values)
+  // -- Every dealer expand T values into n by interpolating
+  // -- Every dealer distribute 1 value to each party
+  // -- Run BroadcastForP() for k values (1 from each dealer)
+  // -- Every player reconstruct T values for each dealer w/ ECC
+  void robustBatchBroadcast(vector<FieldType>& sendElms,
+                            vector< vector<FieldType>& > recvElms,
+                            int nElements,  vector<int> dealerIds);
 
   // ---- main subprotocols ----
 
@@ -174,6 +200,16 @@ makeParties(){
   return;
 }
 
+template<class FieldType>
+void LinearParty<FieldType>::
+makeAlpha(){
+  _alpha.resize(_nActiveParties);
+  for(int i = 0; i < _nActiveParties; i++) {
+    _alpha[i] = _field->GetElement(i + 1);
+  }
+  return;
+}
+
 template <class FieldType>
 LinearParty<FieldType>::
 LinearParty(int argc, char* argv[])
@@ -185,10 +221,12 @@ LinearParty(int argc, char* argv[])
   _nThread = stoi(getArg("numThreads"));
   makeField();
   makeParties();
+  makeAlpha();
 
   // initialize subprotocol classes
   _baParty.setParties(_parties, _myId);
   _baParty.setNumThreads(_nThread);
+  _ecc.setAlpha(_alpha);
   
   
   // build _circuit
@@ -250,6 +288,14 @@ encodeFieldElts(vector<FieldType>& input, vector<byte>& output){
 
 template <class FieldType>
 void LinearParty<FieldType>::
+encodeFieldElt(FieldType& input, vector<byte>& output){
+  int fieldByteSize = _field->getElementSizeInBytes();
+  output.resize(fieldByteSize);
+  _field->elementToBytes(output.data(), input);
+}
+
+template <class FieldType>
+void LinearParty<FieldType>::
 decodeFieldElts(vector<byte>& input, vector<FieldType>& output){
   int fieldByteSize = _field->getElementSizeInBytes();
   // if(input.size() % fieldByteSize) {
@@ -262,19 +308,21 @@ decodeFieldElts(vector<byte>& input, vector<FieldType>& output){
   }
 }
 
+template <class FieldType>
+void LinearParty<FieldType>::
+decodeFieldElt(vector<byte>& input, FieldType& output){
+  int fieldByteSize = _field->getElementSizeInBytes();
+  output = _field->bytesToElement(input.data());
+}
+
 
 // broadcast from a root to all
 // a specified number of field elements
-// -- TODO: replace with BAParty functionality
-// -- TODO: currently assumes a broadcast channel.
 template <class FieldType>
 void LinearParty<FieldType>::
 broadcastElements(vector<FieldType>& buffer,
                   int nElements, int rootId){
 
-  cout << "==== " << rootId <<  ": broadcasting " << nElements
-       << " elements ====" << endl;
-  
   vector<byte> msg;
   int nParties = _parties.size();
   int msgSize = _field->getElementSizeInBytes() * nElements;
@@ -293,12 +341,97 @@ broadcastElements(vector<FieldType>& buffer,
 }
 
 
+template <class FieldType>
+FieldType LinearParty<FieldType>::
+prepareExpandedMsgs(vector<FieldType>& polynomial,
+                    vector< vector<byte> >& expandedMsgs){
+
+  int nParties = _parties.size();
+  expandedMsgs.resize(nParties);
+  for (int j = 0; j < nParties; j++) {
+    FieldType currentPartyAlpha = _alpha[ _parties[j]->getID() ];
+    encodeFieldElt( _ecc.evalPolynomial(currentPartyAlpha, polynomial),
+                    expandedMsgs[j]);
+  }
+
+  FieldType myAlpha = _alpha[ _myId ];
+  return _ecc.evalPolynomial(myAlpha, polynomial);
+}
+
+
+// Broadcast (each dealer (k intotal) spreads T values)
+// -- Every dealer expand T values into n by interpolating
+// -- Every dealer distribute 1 value to each party
+// -- Run BroadcastForP() for k values (1 from each dealer)
+// -- Every player reconstruct T values for each dealer w/ ECC
+// -- TODO: implement
+template <class FieldType>
+void LinearParty<FieldType>::
+robustBatchBroadcast(vector<FieldType>& sendElms, // input
+                     vector< vector<FieldType>& > recvElms, // output
+                     int nElements,  vector<int> dealerIds){
+  // sort dealerIds. 
+  int nParties = _parties.size();
+  int nDealers = dealerIds.size();
+  int elmSize = _field->getElementSizeInBytes();
+  sort(dealerIds.begin(), dealerIds.end());
+
+  // get one element from each dealer Id
+  vector<FieldType> recvExpandedElms(nDealers);
+  for(int i=0; i<nDealers; i++){
+    vector< vector<byte> > sendMsgs;
+    vector<byte> recvMsg;
+    if (dealerIds[i] == _myId) {
+      // prepare messages and scatter
+      sendElms.resize(nElements);
+      // store my own share, and build msgs to scatter
+      recvExpandedElms[i] =  prepareExpandedMsgs(sendElms, sendMsgs);
+      _baParty.scatterMsg(sendMsgs, recvMsg, elmSize, dealerIds[i]);
+      
+    } else {
+      // receive message and store
+      _baParty.scatterMsg(sendMsgs, recvMsg, elmSize, dealerIds[i]);
+      decodeFieldElt(recvMsg, recvExpandedElms[i]);
+    }
+  }
+
+  // each party broadcast all received shares
+  int msgSize = elmSize * nDealers;
+  vector<byte> sendMsg;
+  vector< vector<byte> > recvMsgs;
+  encodeFieldElts(recvExpandedElms, sendMsg);
+  _baParty.broadcastMsgForAll(sendMsg, recvMsgs, msgSize);
+  
+  // each party decode received shares
+  vector< vector<FieldType> > // each row is an expanded code.
+    allExpandedElms(nDealers, vector<FieldType>(nParties+1));
+  for (int i = 0; i < nDealers; i++) {
+    allExpandedElms[i][ _myId ] = recvExpandedElms[i];
+  }
+
+  vector<FieldType> tmpVector;
+  for (int i = 0; i < nParties; i++) {
+    int partyId = _parties[i]->getID();
+    decodeFieldElts(recvMsgs[i], tmpVector);
+    for (int j = 0; j < nDealers; j++) {
+      allExpandedElms[j][partyId] = tmpVector[j];
+    }
+  }
+
+  // use ECC to reconstruct each dealer's elms
+  recvElms.resize(nDealers);
+  for (int i = 0; i < nDealers; i++) {
+    _ecc.reconstruct(allExpandedElms[i], nElements-1, recvElms[i]);
+  }
+
+  return;
+}
 
 // From BTH08 Appendex: batch input sharing (K dealers each T inputs)
 // -- assuming everyone already have enough random sharings
 // -- For K*T times: ReconsPriv() a random share to corresponding Dealer.
 // -- Each Dealer computes T differences
-// -- All dealers broadcast its T differences
+// -- All dealers batch broadcast its T differences
 // -- Each party locally compute input shares
 template <class FieldType>
 void LinearParty<FieldType>::
