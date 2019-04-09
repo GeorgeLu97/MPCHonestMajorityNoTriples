@@ -115,6 +115,8 @@ public:
     void decodeFieldElts(vector<byte>& input, vector<FieldType>& output);
     void encodeFieldElts(vector<FieldType>& input, vector<byte>& output);
 
+    void printVector(vector<FieldType>& input);
+
     int counter = 0;
 
     /**
@@ -307,6 +309,15 @@ public:
 
 };
 
+template <class FieldType> 
+void ProtocolParty<FieldType>::printVector(vector<FieldType>& input) {
+    if(input.size() == 0) {return;}
+    cout << "[" << input[0];
+    for(int i = 1; i < input.size(); i++) {
+        cout << ", " << input[i];
+    }
+    cout << "]" << endl;
+}
 
 template <class FieldType>
 ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("PerfectlySecureLinearCommunication", argc, argv)
@@ -341,8 +352,8 @@ ProtocolParty<FieldType>::ProtocolParty(int argc, char* argv[]) : Protocol("Perf
     }
 
 
-    N = n;
-    T = n/3 - 1; 
+    N = n; //at least 3
+    T = n/3; //at least 1 
     N1 = N;
     T1 = T;
     bigT = N - 2 * T;
@@ -409,7 +420,7 @@ template<class FieldType>
 void ProtocolParty<FieldType>::trimZeroes(vector<FieldType>& a) {
     int i = a.size();
     FieldType Zero = *(field->GetZero());
-    while(a[i-1] == Zero && i > 0) { i--; }
+    while(i > 0 && a[i-1] == Zero) { i--; }
     a.resize(i);
 }
 
@@ -420,7 +431,7 @@ void ProtocolParty<FieldType>::polyAdd2(vector<FieldType>& a, vector<FieldType>&
     for(int i = 0; i < b.size(); i++) {
         tempSum[i] += b[i];
     }
-    tempSum = sum;
+    sum = tempSum;
     trimZeroes(sum);
 }
 
@@ -432,7 +443,7 @@ void ProtocolParty<FieldType>::polyMult2(vector<FieldType>& a, vector<FieldType>
             tempProduct[i + j] += a[i] * b[j];
         }
     }
-    tempProduct = product;
+    product = tempProduct;
     trimZeroes(product);
 }
 
@@ -464,6 +475,7 @@ void ProtocolParty<FieldType>::scalMult(FieldType scalar, vector<FieldType>& pol
 }
 
 //lagrange interpolation - from (alpha,x) to coefficients of polynomial
+//alpha is x coefficient, x is "y" coefficients 
 template <class FieldType>
 void ProtocolParty<FieldType>::lagrange(vector<FieldType>& alpha, vector<FieldType>& x, vector<FieldType>& coeffs) {
     vector<FieldType> unit;
@@ -471,11 +483,11 @@ void ProtocolParty<FieldType>::lagrange(vector<FieldType>& alpha, vector<FieldTy
     vector<vector<FieldType>> linearPolys(alpha.size());
     vector<vector<FieldType>> prefixPolys(alpha.size()); //prefix[i] = (x-alpha_{0 ... i-1})
     vector<vector<FieldType>> suffixPolys(alpha.size()); //suffix[i] = (x-alpha_{i + 1 ... n-1})
-    vector<vector<FieldType>> exclusionPolys(alpha.size());
+    vector<vector<FieldType>> exclusionPolys(alpha.size()); //exP[i] should be 0 all alpha except alpha[i]
     vector<vector<FieldType>> xExclusionPolys(alpha.size());
     prefixPolys[0] = unit;
     suffixPolys[alpha.size()-1] = unit;
-    
+
     for(int i = 0; i < alpha.size(); i++) {
         linearPolys[i].push_back(*(field->GetZero()) - alpha[i]); //-alpha_i
         linearPolys[i].push_back(*(field->GetOne()));
@@ -486,6 +498,17 @@ void ProtocolParty<FieldType>::lagrange(vector<FieldType>& alpha, vector<FieldTy
         polyMult2(suffixPolys[alpha.size() - i], linearPolys[alpha.size() - i], suffixPolys[alpha.size() - i - 1]);
     }
 
+
+    /*
+    for(int i = 0; i < alpha.size(); i++) {
+        for(int j = 0; j < prefixPolys[i].size(); j++) {
+            cout << prefixPolys[i][j] << "x^" << j << " + ";
+        }
+        cout << endl;
+    }
+
+    */
+
     for(int i = 0; i < alpha.size(); i++) {
         polyMult2(prefixPolys[i], suffixPolys[i], exclusionPolys[i]);
         FieldType s = (*(field->GetOne())) / evaluatePolynomial(alpha[i], exclusionPolys[i]);
@@ -494,6 +517,17 @@ void ProtocolParty<FieldType>::lagrange(vector<FieldType>& alpha, vector<FieldTy
     }
 
     polyAdd(xExclusionPolys, coeffs);
+
+    /*
+    for(int i = 0; i < alpha.size(); i++) {
+        for(int j = 0; j < exclusionPolys.size(); j++) {
+            cout << "xExclusionTest: " << i << " " << j << " " << alpha[i] << " " << x[i] << " " << evaluatePolynomial(alpha[i], xExclusionPolys[j]) << endl;
+        }
+    }
+
+    for(int i = 0; i < alpha.size(); i++) {
+        cout << "LagrangeTest: " << alpha[i] << " " << x[i] << " " << evaluatePolynomial(alpha[i], coeffs) << endl;
+    } */
 }
 
 template <class FieldType>
@@ -814,7 +848,7 @@ bool ProtocolParty<FieldType>::isHappy(bool selfHappiness) {
     roundFunctionSyncBroadcast(happiness, otherHappiness);
     if(!selfHappiness) { return false; }
     for(int i = 0; i < activeParties.size(); i++) {
-        if(otherHappiness[i][0] != 0) { return false; }
+        if(otherHappiness[i][0] != 1) { cout << "UnHappy!!!!" << endl; return false; }
     }
     return true;
 }
@@ -883,6 +917,7 @@ FieldType ProtocolParty<FieldType>::reconstructPrivate(FieldType secretShare, in
 template <class FieldType>
 bool ProtocolParty<FieldType>::reconstructPublic(vector<FieldType>& secretShares, int degree, vector<FieldType>& reconstructedSecrets)
 {
+
     bool happiness = true;
     vector<vector<FieldType>> ujs;
     for(auto it = activePartyIDs.begin(); it != activePartyIDs.end(); it++) {
@@ -902,7 +937,7 @@ bool ProtocolParty<FieldType>::reconstructPublic(vector<FieldType>& secretShares
 
     for(int i = 0; i < activeParties.size(); i++) {
         encodeFieldElts(ujs[i], sendBufs[i]);
-        recBufs[i].resize(ujs[i].size());
+        recBufs[i].resize(sendBufs[i].size());
     }
 
     //sendBufs should have degree bigT poylnomial
@@ -939,13 +974,12 @@ bool ProtocolParty<FieldType>::reconstructPublic(vector<FieldType>& secretShares
     for(auto it = ujd_transpose.begin(); it != ujd_transpose.end(); it++) {
         ui.push_back(interpolate(*it, degree));
     }
-    
+
     //broadcast computed ui's
     encodeFieldElts(ui, uiSend);
     for(auto it = uiRec.begin(); it != uiRec.end(); it++) {
         it->resize(uiSend.size());
     }
-
     //uisend should be constant
     // = s1 + s2b + s3b^2 + ... where b = group elt and s1 is true secret. 
     roundFunctionSyncBroadcast(uiSend, uiRec);
@@ -984,12 +1018,16 @@ bool ProtocolParty<FieldType>::reconstructPublic(vector<FieldType>& secretShares
 
     //ui -> si values to coefficients
     for(auto it = uj_transpose.begin(); it != uj_transpose.end(); it++) {
-        it->resize(bigT);
         vector<FieldType> alpha = getAlpha();
         vector<FieldType> si;
         lagrange(alpha, *it, si);
+
+        si.resize(bigT);
+
         for(auto it2 = si.begin(); it2 != si.end(); it2++) { reconstructedSecrets.push_back(*it2); }
     }
+
+    reconstructedSecrets.resize(secretShares.size());
     return true;
 }
 
@@ -1280,19 +1318,12 @@ bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vecto
         d2shareallbytes[i].resize(eltSize);
     }
 
-    cout << "doubleShareRandom - Sync1" << endl;
-
     roundFunctionSync(d1sharebytes, d1shareallbytes, 14);
-
-    cout << "doubleShareRandom - Sync1 - 0.5" << endl;
-
     roundFunctionSync(d2sharebytes, d2shareallbytes, 15);
 
-    cout << "doubleShareRandom - Sync1 - Complete" << endl;
 
-
-    vector<FieldType> d1shareall(N1);
-    vector<FieldType> d2shareall(N1);
+    vector<FieldType> d1shareall;
+    vector<FieldType> d2shareall;
 
     for(int i = 0; i < N1; i++) {
         d1shareall.push_back(field->bytesToElement(d1shareallbytes[i].data()));
@@ -1431,8 +1462,8 @@ bool ProtocolParty<FieldType>::doubleShareRandomVerifyOne(int degree1, int degre
         return false;
     }
 
-    vector<FieldType> d1shareall(N1);
-    vector<FieldType> d2shareall(N1);
+    vector<FieldType> d1shareall;
+    vector<FieldType> d2shareall;
 
     for(int i = 0; i < N1; i++) {
         d1shareall[i] = field->bytesToElement(d1sharebytesall1[i].data());
@@ -1655,7 +1686,6 @@ pair<int,int> ProtocolParty<FieldType>::doubleShareRandomVerifyAll(int degree1, 
 template <class FieldType>
 void ProtocolParty<FieldType>::generateTriples(vector<tuple<FieldType, FieldType, FieldType>>& randomTriples) {
     while(selfActive) {
-        cout << "Triple Attempt" << endl;
         vector<tuple<FieldType, FieldType>> a;
         vector<tuple<FieldType, FieldType>> b;
         vector<tuple<FieldType, FieldType>> r;
@@ -1670,16 +1700,26 @@ void ProtocolParty<FieldType>::generateTriples(vector<tuple<FieldType, FieldType
             continue;
         }
 
-        cout << "Doubles Generated" << endl;
+        //cout << "Doubles Generated: " << T << " "<< T1 << endl;
+
+        /*
+        for(int i = 0; i < a.size(); i++) {
+            cout << m_partyId << ": (" << get<0>(a[i]) << ", " << get<1>(a[i]) << ") (" << get<0>(b[i]) << ", " << get<1>(b[i]) << ") ("<< get<0>(r[i]) << ", " << get<1>(r[i]) << ")" << endl;
+        }*/
 
         for(int i = 0; i < a.size(); i++) {
             d.push_back(get<1>(a[i]) * get<1>(b[i]) - get<1>(r[i]));
         }
 
         if(!reconstructPublic(d, 2 * T1, dtrue)) { continue; }
+
         for(int i = 0; i < a.size(); i++) {
-            randomTriples.push_back(make_tuple(get<0>(a[i]), get<0>(b[i]), get<0>(r[i]) - dtrue[i]));
+            randomTriples.push_back(make_tuple(get<0>(a[i]), get<0>(b[i]), get<0>(r[i]) + dtrue[i]));
         }
+
+        //tuple<FieldType, FieldType, FieldType> lastTriple = randomTriples[randomTriples.size() - 1];
+        //cout << m_partyId << ": (" << get<0>(lastTriple) << ", " << get<1>(lastTriple) << ", "<< get<2>(lastTriple) <<")"<< endl;
+
         return;
     }
 
@@ -1996,7 +2036,7 @@ bool ProtocolParty<FieldType>::preparationPhase()
     circuit.getNrOfMultiplicationGates() + circuit.getNrOfRandomGates();
     for(int gS = 0; gS < triplesNeeded; gS += bigT) {
         generateTriples(randomTriplesArray);
-        cout << "Triples Generated: " << gS << endl;
+        if(((gS + bigT) % 20) < (gS % 20)) { cout << "Triples Generated: " << gS+bigT << "/" << triplesNeeded << endl; }
     }
 
     return true;
