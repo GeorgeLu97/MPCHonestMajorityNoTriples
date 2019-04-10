@@ -40,15 +40,17 @@ using namespace std::chrono;
 //
 
 // TODO:
+
 // 1. change all FieldType(n) to _field->getElement(n);
 // -- GF2E will not properly initialize!!
 // -- also do this for ECC.h and BAParty.h
 // -- need to add _field member for them too.
-// 2. 4 consistency functionality
 // 3. reconstruction
+// 2. 4 consistency functionality
 // 4. fault localization
 
 // Questions:
+// 0. Using singleShareRandom for random gates and input gates?
 // 1. Error checking during protocol (e.g. timeout communication?)
 // 2. How to agree on a constant HIM matrix?
 
@@ -104,19 +106,29 @@ private:
   FieldType prepareExpandedMsgs(vector<FieldType>& polynomial,
                                 vector< vector<byte> >& expandedMsgs);
   // Broadcast (each dealer (k intotal) spreads T values)
-  // -- Every dealer expand T values into n by interpolating
-  // -- Every dealer distribute 1 value to each party
-  // -- Run BroadcastForP() for k values (1 from each dealer)
-  // -- Every player reconstruct T values for each dealer w/ ECC
   void robustBatchBroadcast(vector<FieldType>& sendElms,
                             vector< vector<FieldType> >& recvElms,
                             int nElements,  vector<int>& dealerIds);
+
+  // create T random shares among parties. return false if fails
+  // Note: non-robust.
+  bool singleShareRandom(int d, vector<FieldType> shares);
+  // similarly create T random triple-shares among parties
+  bool tripleShareRandom(int d1, int d2, int d3,
+                         vector< vector<FieldType> >& shares);
+  // reconstruct an element towards root. return false if fails
+  // Note: robust if degree <= T. 
+  bool reconstructPrivate(FieldType& share,
+                          FieldType& result, int degree, int root);
+  // reconstruct (at most) T elements towards all. return false if fails.
+  // Note: robust if degree <= T.
+  bool reconstructPublic(vector<FieldType>& shares,
+                         vector<FieldType>& results, int degree);
 
   // ---- main subprotocols ----
 
   // From BTH08 Appendex: batch input sharing (K dealers each T inputs)
   void InputPhase();
-  void RandomPhase();
   void EvalPhase();
   void OutputPhase();
   
@@ -139,22 +151,6 @@ public:
   vector<FieldType> _wireValues;
     
 };
-
-template<class FieldType>
-void LinearParty<FieldType>::
-readInputFromFile(string fileName){
-
-  ifstream inputFile(fileName);
-  int inputSize = _input.size();
-  long curInput;
-
-  // read available inputs to fill _input
-  for(int i=0; i< inputSize && !(inputFile.eof()); i++){
-    inputFile >> curInput;
-    _input[i] = _field->GetElement(curInput);
-  }
-  return;
-}
 
 
 static inline void 
@@ -277,14 +273,6 @@ run(){
 }
 
 
-// runs preparation phase:
-// -- TODO: generating random shares of triples
-template <class FieldType>
-void LinearParty<FieldType>::
-runOffline(){
-  return;
-}
-
 template <class FieldType>
 void LinearParty<FieldType>::
 encodeFieldElts(vector<FieldType>& input, vector<byte>& output){
@@ -324,6 +312,22 @@ decodeFieldElt(vector<byte>& input, FieldType& output){
   output = _field->bytesToElement(input.data());
 }
 
+template<class FieldType>
+void LinearParty<FieldType>::
+readInputFromFile(string fileName){
+
+  ifstream inputFile(fileName);
+  int inputSize = _input.size();
+  long curInput;
+
+  // read available inputs to fill _input
+  for(int i=0; i< inputSize && !(inputFile.eof()); i++){
+    inputFile >> curInput;
+    _input[i] = _field->GetElement(curInput);
+  }
+  return;
+}
+
 
 // broadcast from a root to all
 // a specified number of field elements
@@ -359,7 +363,8 @@ prepareExpandedMsgs(vector<FieldType>& polynomial,
   expandedMsgs.resize(nParties);
   for (int j = 0; j < nParties; j++) {
     FieldType currentPartyAlpha = _alpha[ _parties[j]->getID() ];
-    FieldType currentEval = _ecc.evalPolynomial(currentPartyAlpha, polynomial);
+    FieldType currentEval =
+      _ecc.evalPolynomial(currentPartyAlpha, polynomial);
     encodeFieldElt( currentEval, expandedMsgs[j]);
   }
 
@@ -436,6 +441,46 @@ robustBatchBroadcast(vector<FieldType>& sendElms, // input
   return;
 }
 
+
+// create T random shares among parties. return false if fails
+// Note: non-robust.
+// -- TODO: implement
+template <class FieldType>
+bool LinearParty<FieldType>::
+singleShareRandom(int d, vector<FieldType> shares) {
+  return true;
+}
+
+// similarly create T random triple-shares among parties
+// -- TODO: implement
+template <class FieldType>
+bool LinearParty<FieldType>::
+tripleShareRandom(int d1, int d2, int d3,
+                  vector<vector<FieldType>> &shares) {
+  return true;  
+}
+
+
+// reconstruct an element towards root. return false if fails
+// Note: robust if degree <= T.
+// -- TODO: implement
+template <class FieldType>
+bool LinearParty<FieldType>::
+reconstructPrivate(FieldType& share,
+                   FieldType& result, int degree, int root){
+  return true;
+}
+// reconstruct (at most) T elements towards all. return false if fails.
+// Note: robust if degree <= T.
+// -- TODO: implement
+template <class FieldType>
+bool LinearParty<FieldType>::
+reconstructPublic(vector<FieldType>& shares,
+                  vector<FieldType>& results, int degree){
+  return true;
+}
+
+
 // fill a list of partyIds with inputs.
 // also return the minimum number of input amoung them
 static inline int
@@ -482,8 +527,8 @@ storeRecvDealerInputs(vector<FieldType>& totalInputs,
   int nDealers = dealerIds.size();
   for (int i = 0; i < nDealers; i++) {
     totalInputs[ dealerIds[i] ].insert( totalInputs[ dealerIds[i] ].end(),
-                                      dealerInputs[i].begin(),
-                                      dealerInputs[i].end() );
+                                        dealerInputs[i].begin(),
+                                        dealerInputs[i].end() );
   }
   return;
 }
@@ -494,6 +539,7 @@ storeRecvDealerInputs(vector<FieldType>& totalInputs,
 // -- Each Dealer computes T differences
 // -- All dealers batch broadcast its T differences
 // -- Each party locally compute input shares
+// -- TODO currently only share inputs in the clear.
 template <class FieldType>
 void LinearParty<FieldType>::
 InputPhase(){
@@ -566,15 +612,6 @@ EvalPhase(){
   cout << "---- finished Eval Phase ----" << endl;
 }
 
-// create random shares
-// -- TODO: currently a stub: do nothing.
-template <class FieldType>
-void LinearParty<FieldType>::
-RandomPhase(){
-  return;
-}
-
-
 
 // reconstruct outputs
 template <class FieldType>
@@ -610,18 +647,24 @@ OutputPhase(){
 }
 
 
+// runs preparation phase:
+// -- TODO: generate random shares for input and random gates
+// -- TODO: generating shares random triples
+template <class FieldType>
+void LinearParty<FieldType>::
+runOffline(){
+  return;
+}
+
+
 // runs =main()= protocol
-// -- TODO: 
 // -- InputPhase(): share inputs
-// -- RandomPhase(): share random gates
 // -- EvalPhase(): evaluate circuit
 // -- OutputPhase(): reconstruct outputs
 template <class FieldType>
 void LinearParty<FieldType>::
 runOnline(){
-
   InputPhase();
-  RandomPhase();
   EvalPhase();
   OutputPhase();
   return;
