@@ -2,7 +2,6 @@
 #define LINEARPARTY_H_
 
 #include <stdlib.h>
-
 #include <libscapi/include/primitives/Matrix.hpp>
 #include <libscapi/include/cryptoInfra/Protocol.hpp>
 #include <libscapi/include/circuits/ArithmeticCircuit.hpp>
@@ -27,24 +26,22 @@ using namespace std;
 using namespace std::chrono;
 
 // Plan: adapt & test existing code by George bit by bit.
-//
 // - 4 consistency functionality
-//
 // - reconstruction
 // - fault localization
 // - player elimination
-//
+// 
 // - performance testing
 // - (trivial) malicious party
 // - optimizations
 //
 
 // TODO:
-
 // 1. change all FieldType(n) to _field->getElement(n);
 // -- GF2E will not properly initialize!!
 // -- also do this for ECC.h and BAParty.h
 // -- need to add _field member for them too.
+// 1.1 initialize beta, HIM, and set HIM for BAParty.
 // 3. reconstruction
 // 2. 4 consistency functionality
 // 4. fault localization
@@ -52,7 +49,7 @@ using namespace std::chrono;
 // Questions:
 // 0. Using singleShareRandom for random gates and input gates?
 // 1. Error checking during protocol (e.g. timeout communication?)
-// 2. How to agree on a constant HIM matrix?
+// 2. How to agree on a constant HIM matrix (currently just 1 ~ 2n)?
 
 template <class FieldType>
 class LinearParty : public Protocol, public HonestMajority, MultiParty{
@@ -96,11 +93,12 @@ private:
   void decodeFieldElt(vector<byte>& input, FieldType& output);
   void readInputFromFile(string fileName);
 
-  // initialization funtions
+  // ---- initialization funtions ----
   void makeField();
   void makeParties();
   void makeAlpha();
 
+  // ---- Batch broadcasting (BTH08 Appendix) ----
   // expand polynomial to n evaluations. Encode each into messages
   // also return the evaluation on my own alpha.
   FieldType prepareExpandedMsgs(vector<FieldType>& polynomial,
@@ -110,12 +108,16 @@ private:
                             vector< vector<FieldType> >& recvElms,
                             int nElements,  vector<int>& dealerIds);
 
+  // ---- Random shares and Reconstructions ----
   // create T random shares among parties. return false if fails
   // Note: non-robust.
   bool singleShareRandom(int d, vector<FieldType> shares);
-  // similarly create T random triple-shares among parties
-  bool tripleShareRandom(int d1, int d2, int d3,
-                         vector< vector<FieldType> >& shares);
+  // similarly create T random multiple-shares among parties
+  bool multipleShareRandom(const vector<int> degrees,
+                           vector< vector<FieldType> >& shares);
+  // similarly create T random shares of 0 among parties
+  bool singleShareZero(int d, vector<FieldType> shares);
+
   // reconstruct an element towards root. return false if fails
   // Note: robust if degree <= T. 
   bool reconstructPrivate(FieldType& share,
@@ -126,10 +128,11 @@ private:
                          vector<FieldType>& results, int degree);
 
   // ---- main subprotocols ----
-
-  // From BTH08 Appendex: batch input sharing (K dealers each T inputs)
+  // From BTH08 Appendix: batch input sharing (K dealers each T inputs)
   void InputPhase();
+  // From new paper =eval()=
   void EvalPhase();
+  // From new paper =output()=
   void OutputPhase();
   
 public:
@@ -140,7 +143,7 @@ public:
   // ======== inherited functionalites ========
   bool hasOffline() override {return true;}
   bool hasOnline() override {return true;}
-  void run() override;
+  void run() override; // <- runs =main()= from the new paper
   void runOffline() override;
   void runOnline() override;
 
@@ -451,14 +454,23 @@ singleShareRandom(int d, vector<FieldType> shares) {
   return true;
 }
 
-// similarly create T random triple-shares among parties
+// similarly create T random multiple-shares among parties
 // -- TODO: implement
 template <class FieldType>
 bool LinearParty<FieldType>::
-tripleShareRandom(int d1, int d2, int d3,
-                  vector<vector<FieldType>> &shares) {
+multipleShareRandom(const vector<int> degrees,
+                    vector< vector<FieldType> > &shares) {
   return true;  
 }
+
+// similarly create T random shares of 0 among parties
+// -- TODO implement
+template <class FieldType>
+bool LinearParty<FieldType>::
+singleShareZero(int d, vector<FieldType> shares) {
+  return true;
+}
+
 
 
 // reconstruct an element towards root. return false if fails
@@ -669,8 +681,6 @@ runOnline(){
   OutputPhase();
   return;
 }
-
-
 
 
 #endif /* LINEARPARTY_H_ */
