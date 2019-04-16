@@ -27,7 +27,6 @@ using namespace std::chrono;
 
 // Plan: adapt & test existing code by George bit by bit.
 // - 4 consistency functionality
-// - reconstruction
 // - fault localization
 // - player elimination
 // 
@@ -41,13 +40,18 @@ using namespace std::chrono;
 // -- GF2E will not properly initialize!!
 // -- also do this for ECC.h and BAParty.h
 // -- need to add _field member for them too.
-// 1.1 initialize beta, HIM, and set HIM for BAParty.
+// 1.1 initialize HIM, and set HIM for BAParty.
+// 1.2 only loop on active parties!
+
+
+// 1.3 only run ecc on active alphas!
+
+
 // 3. reconstruction
 // 2. 4 consistency functionality
 // 4. fault localization
 
 // Questions:
-// 0. Using singleShareRandom for random gates and input gates?
 // 1. Error checking during protocol (e.g. timeout communication?)
 // 2. How to agree on a constant HIM matrix (currently just 1 ~ 2n)?
 
@@ -67,14 +71,17 @@ private:
   // Note: every party has the same _alpha.
   //  ..   Same with _inputSizes
   vector<FieldType> _alpha;
+  vector<FieldType> _beta;
   vector<int> _inputSizes;
 
   // subprotocol classes
   BAParty<FieldType> _baParty;
-  ECC<FieldType> _ecc;
+  ECC<FieldType> _eccAlpha;
+  ECC<FieldType> _eccBeta;
 
   // manage active/inactive parties by a mask
   vector< shared_ptr<ProtocolPartyData> > _parties;
+  // _activeMask[ partyId ] == 1 if partyId is active.
   vector<bool> _activeMask;
   
   // only store long value (not FieldType) to save memory
@@ -97,6 +104,7 @@ private:
   void makeField();
   void makeParties();
   void makeAlpha();
+  void makeBeta();
 
   // ---- Batch broadcasting (BTH08 Appendix) ----
   // expand polynomial to n evaluations. Encode each into messages
@@ -120,8 +128,7 @@ private:
 
   // reconstruct an element towards root. return false if fails
   // Note: robust if degree <= T. 
-  bool reconstructPrivate(FieldType& share,
-                          FieldType& result, int degree, int root);
+  FieldType reconstructPrivate(FieldType& share, int degree, int root);
   // reconstruct (at most) T elements towards all. return false if fails.
   // Note: robust if degree <= T.
   bool reconstructPublic(vector<FieldType>& shares,
@@ -204,7 +211,7 @@ makeParties(){
                           getArg("partiesFile"));
 
   _activeMask.clear();
-  _activeMask.resize(_parties.size(), true);
+  _activeMask.resize(_nActiveParties, true);
   return;
 }
 
@@ -214,6 +221,17 @@ makeAlpha(){
   _alpha.resize(_nActiveParties);
   for(int i = 0; i < _nActiveParties; i++) {
     _alpha[i] = _field->GetElement(i + 1);
+  }
+  return;
+}
+
+
+template<class FieldType>
+void LinearParty<FieldType>::
+makeBeta(){
+  _beta.resize(_nActiveParties);
+  for(int i = 0; i < _nActiveParties; i++) {
+    _beta[i] = _field->GetElement(i + 1 + _nActiveParties);
   }
   return;
 }
@@ -230,11 +248,13 @@ LinearParty(int argc, char* argv[])
   makeField();
   makeParties();
   makeAlpha();
+  makeBeta();
 
   // initialize subprotocol classes
   _baParty.setParties(_parties, _myId);
   _baParty.setNumThreads(_nThread);
-  _ecc.setAlpha(_alpha);
+  _eccAlpha.setAlpha(_alpha);
+  _eccBeta.setAlpha(_beta);
   
   
   // build _circuit
@@ -367,12 +387,12 @@ prepareExpandedMsgs(vector<FieldType>& polynomial,
   for (int j = 0; j < nParties; j++) {
     FieldType currentPartyAlpha = _alpha[ _parties[j]->getID() ];
     FieldType currentEval =
-      _ecc.evalPolynomial(currentPartyAlpha, polynomial);
+      _eccAlpha.evalPolynomial(currentPartyAlpha, polynomial);
     encodeFieldElt( currentEval, expandedMsgs[j]);
   }
 
   FieldType myAlpha = _alpha[ _myId ];
-  return _ecc.evalPolynomial(myAlpha, polynomial);
+  return _eccAlpha.evalPolynomial(myAlpha, polynomial);
 }
 
 
@@ -438,7 +458,7 @@ robustBatchBroadcast(vector<FieldType>& sendElms, // input
   // use ECC to reconstruct each dealer's elms
   recvElms.resize(nDealers);
   for (int i = 0; i < nDealers; i++) {
-    _ecc.reconstruct(allExpandedElms[i], nElements-1, recvElms[i]);
+    _eccAlpha.reconstruct(allExpandedElms[i], nElements-1, recvElms[i]);
   }
 
   return;
@@ -475,21 +495,121 @@ singleShareZero(int d, vector<FieldType> shares) {
 
 // reconstruct an element towards root. return false if fails
 // Note: robust if degree <= T.
-// -- TODO: implement
 template <class FieldType>
-bool LinearParty<FieldType>::
-reconstructPrivate(FieldType& share,
-                   FieldType& result, int degree, int root){
-  return true;
+FieldType LinearParty<FieldType>::
+reconstructPrivate(FieldType& share, int degree, int root){
+  FieldType result = _field->GetZero();
+
+  vector<byte> msg;
+  vector< vector<byte> > recvMsgs;
+
+  int msgSize = _field->getElementSizeInBytes();
+  int nPartiesInc = _parties.size() + 1;
+  int nParties  = _parties.size();
+  if (_myId == root) {
+    // root: receive shares, and decode
+    vector<FieldType> shares(nPartiesInc, _field->GetZero);
+    shares[_myId] = share;
+    
+    recvMsgs.resize(nParties);
+    _baParty.gatherMsg(msg, recvMsgs, msgSize, root);
+
+    for (int i = 0; i < nParties; i++) {
+      if (_activeMask[ _parties[i]->getID() ]) {
+        decodeFieldElt(recvMsgs, shares[ _parties[i]->getID() ]);
+      }
+    }
+
+    vector<FieldType> polynomial;
+    bool success = _eccAlpha.reconstruct(shares, degree, polynomial);
+    // assert(success);
+    
+    result = _eccAlpha.evalPolynomial(_field->GetZero(), polynomial);
+
+  } else {
+    // non-root party: send my share
+    encodeFieldElt(share, msg);
+    _baParty.gatherMsg(msg, recvMsgs, msgSize, root);
+    
+  }
+
+  return result;
 }
 // reconstruct (at most) T elements towards all. return false if fails.
 // Note: robust if degree <= T.
-// -- TODO: implement
+// -- treat shares as a polynomial
+// -- expand to n points by evaluating at beta
+// -- send to corresponding parties (all-to-all)
+// -- reconstrcut f according to received, and send f(0) (all-to-all)
+// -- reconstruct g according to received,
+// -- and coefficients are reconstruced values.
 template <class FieldType>
 bool LinearParty<FieldType>::
 reconstructPublic(vector<FieldType>& shares,
                   vector<FieldType>& results, int degree){
-  return true;
+
+  int nParties = _parties.size();
+  int nPartiesInc = _parties.size() + 1;
+  
+  // -- treat shares as a polynomial
+  // -- expand to n points by evaluating at beta
+  vector<FieldType> uSend(nPartiesInc);
+  for (int i = 0; i < nPartiesInc; i++) {
+    uSend[i] = _eccAlpha.evalPolynomial(_beta[i], shares);
+  }
+
+
+  // -- send to corresponding parties (all-to-all)
+  vector<FieldType> uRecv(nPartiesInc);
+  int msgSize = _field->getElementSizeInBytes();
+  vector<byte> recvMsg(msgSize);
+  vector< vector<byte> > sendMsgs(nPartiesInc, vector<byte>(msgSize));
+  
+  for (int i = 0; i < nPartiesInc; i++) {
+    if (!_activeMask[i]) {
+      continue;
+    }
+
+    if (i == _myId) {
+      // I'm the root of scatter
+      uRecv[i] = uSend[i];
+      for (int j = 0; j < nParties; j++) {
+        encodeFieldElt(uSend[ _parties[j]->getID() ], sendMsgs[j]);
+      }
+      _baParty.scatterMsg(sendMsgs, recvMsg, msgSize, i);
+
+    } else {
+      // I'm the receiver of scatter
+      _baParty.scatterMsg(sendMsgs, recvMsg, msgSize, i);
+      decodeFieldElt(recvMsg, uRecv[i]);
+    }
+  }
+
+  // -- reconstrcut f according to received, and send f(0) (all-to-all)
+  vector<FieldType> f;
+  bool success = _eccAlpha.reconstruct(uRecv, degree, f);
+  if (!success) {
+    return false;
+  }
+  FieldType f0 = _eccAlpha.evalPolynomial(_field->GetZero(), f);
+  vector<byte> sendMsg(msgSize);
+  vector< vector<byte> > recvMsgs(nParties, vector<byte>(msgSize));
+  encodeFieldElt(f0, sendMsg);
+  _baParty.broadcastMsgForAll(sendMsg, recvMsgs, msgSize);
+    
+  // -- reconstruct g according to received
+  // -- and coefficients are reconstruced values.
+  vector<FieldType> recvF0(nPartiesInc);
+  recvF0[_myId] = f0;
+  for (int i = 0; i < nParties; i++) {
+    if (!_activeMask[ _parties[i]->getID() ]) {
+      continue;
+    }
+
+    decodeFieldElt(recvMsgs[i], recvF0[ _parties[i]->getID() ]);
+  }
+  success = _eccBeta.reconstruct(recvF0, degree, results);
+  return success;
 }
 
 

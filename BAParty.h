@@ -55,18 +55,19 @@ private:
 
   // worker functions for multi-threading
   void exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
-                         int threadId, int nThreads);
+                         int threadId, int nThread);
   void exchangeMsgWorker(vector<byte>& sendMsg,
                          vector< vector<byte> >& recvMsgs,
-                         int msgSize, int threadId, int nThreads);
+                         int msgSize, int threadId, int nThread);
+  void spreadBitWorker(bool sendBit, int threadId, int nThread);
+  void spreadMsgWorker(vector<byte>& msg, int threadId, int nThread);
+  void gatherBitWorker(vector<bool>& recvBit, int threadId, int nThread);
+  void gatherMsgWorker(vector< vector<byte> >& recvMsgs,
+                       int msgSize, int threadId, int nThread);
   void scatterMsgWorker(vector< vector<byte> >& sendMsgs,
                         int msgSize, int threadId, int nThread);
-  void spreadBitWorker(bool sendBit, int threadId, int nThreads);
-  void spreadMsgWorker(vector<byte>& msg, int threadId, int nThreads);
-  void gatherBitWorker(vector<bool>& recvBit, int threadId, int nThreads);
-  
 
-  // used in base Phase King
+    // used in base Phase King
   bool spreadBit(bool sendBit, int kingId);
   void exchangeBit(bool sendBit, vector<bool>& recvBits);
   bool universal_rounds(bool b, int* D,
@@ -104,8 +105,10 @@ public:
   // trivial from consensus(): first dealer spread bit, then run consensus().
   void broadcastBit(bool& b, int rootId);
   void broadcastMsg(vector<byte>& msg, int msgSize, int rootId);
-  void scatterMsg(vector< vector<byte> >& sendMsgs,
-                  vector<byte>& recvMsg, int msgSize, int rootId);
+  void scatterMsg(vector< vector<byte> >& sendMsgs, vector<byte>& recvMsg,
+                  int msgSize, int rootId);
+  void gatherMsg(vector<byte>& sendMsg, vector< vector<byte> >& recvMsgs,
+                 int msgSize, int rootId);
   void broadcastMsgForAll(vector<byte>& sendMsg, // input
                           vector< vector<byte> >& recvMsgs,
                           int msgSize);
@@ -188,14 +191,14 @@ getRemainingParties(vector< shared_ptr<ProtocolPartyData> >& parties){
 template <class FieldType>
 void BAParty<FieldType>::
 exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
-                  int threadId, int nThreads){
+                  int threadId, int nThread){
 
   int nParties = _partySocket.size();
   char sendByte = sendBit ? 1 : 0;
   vector<char> recvBytes(nParties);
 
   // communicate with other parties
-  for(int i=threadId; i<nParties; i+=nThreads){
+  for(int i=threadId; i<nParties; i+=nThread){
     if(!_activeMask[i]){
       // skip inactive (eliminated) parties
       continue;
@@ -213,7 +216,7 @@ exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
   }
 
   // convert messages into bits
-  for(int i=threadId; i<nParties; i+=nThreads){
+  for(int i=threadId; i<nParties; i+=nThread){
     if(!_activeMask[i]){
       continue;
     }
@@ -244,13 +247,13 @@ exchangeBit(bool sendBit, vector<bool>& recvBits){
 template <class FieldType>
 void BAParty<FieldType>::
 spreadBitWorker(bool sendBit,
-                int threadId, int nThreads){
+                int threadId, int nThread){
 
   int nParties = _partySocket.size();
   char sendByte = sendBit ? 1 : 0;
 
   // communicate with other parties
-  for(int i=threadId; i<nParties; i+=nThreads){
+  for(int i=threadId; i<nParties; i+=nThread){
     if(!_activeMask[i]){
       // skip inactive (eliminated) parties
       continue;
@@ -627,9 +630,9 @@ broadcastBit(bool &b, int rootId){
 template <class FieldType>
 void BAParty<FieldType>::
 spreadMsgWorker(vector<byte>& msg,
-                int threadId, int nThreads) {
+                int threadId, int nThread) {
   int nParties = _partySocket.size();
-  for (int i = threadId; i < nParties; i += nThreads) {
+  for (int i = threadId; i < nParties; i += nThread) {
     if (!_activeMask[i]) {
       continue;
     }
@@ -641,13 +644,13 @@ template <class FieldType>
 void BAParty<FieldType>::
 exchangeMsgWorker(vector<byte>& sendMsg,
                   vector< vector<byte> >& recvMsgs,
-                  int msgSize, int threadId, int nThreads){
+                  int msgSize, int threadId, int nThread){
 
   int nParties = _partySocket.size();
   recvMsgs.clear();
   recvMsgs.resize(nParties, vector<byte>(msgSize));
 
-  for (int i = threadId; i < nParties; i += nThreads) {
+  for (int i = threadId; i < nParties; i += nThread) {
     if (!_activeMask[i]) {
       continue;
     }
@@ -730,7 +733,7 @@ scatterMsg(vector< vector<byte> >& sendMsgs,
   
   if (rootId == _myId) {
     // I'm the sender
-    sendMsgs.resize(_partySocket.size());
+    sendMsgs.resize(nParties);
     vector<thread> threads(_nThread);
     for (int i = 0; i < _nThread; i++) {
       threads[i] = thread(&BAParty::scatterMsgWorker, this,
@@ -755,6 +758,58 @@ scatterMsg(vector< vector<byte> >& sendMsgs,
 }
 
 
+template <class FieldType>
+void BAParty<FieldType>::
+gatherMsgWorker(vector< vector<byte> >& recvMsgs,
+                int msgSize, int threadId, int nThread){
+  int nParties = _partySocket.size();
 
+  // communicate with other parties
+  for(int i=threadId; i<nParties; i+=nThread){
+    if(!_activeMask[i]){
+      // skip inactive (eliminated) parties
+      continue;
+    }
+    recvMsgs[i].resize(msgSize);
+    _partySocket[i]->getChannel()->read(recvMsgs[i].data(), msgSize);
+  }
+
+  return;
+}
+
+
+template <class FieldType>
+void BAParty<FieldType>::
+gatherMsg(vector<byte>& sendMsg, vector< vector<byte> >& recvMsgs,
+          int msgSize, int rootId){
+
+  int nParties = _partySocket.size();
+
+  if(rootId == _myId){
+
+    recvMsgs.resize(nParties);
+    vector<thread> threads(_nThread);
+    for(int i=0; i<_nThread; i++){
+      threads[i] = thread(&BAParty::gatherMsgWorker, this,
+                          ref(recvMsgs), msgSize, i, _nThread);
+    }
+    for(int i=0; i<_nThread; i++){
+      threads[i].join();
+    }
+    
+  }else{
+    sendMsg.resize(msgSize);
+    for (int i = 0; i < nParties; i++) {
+      if (!_activeMask[i] ||
+          _partySocket[i]->getID() != rootId) {
+        continue;
+      }
+      _partySocket[i]->getChannel()->write(sendMsg.data(), msgSize);
+    }    
+  }
+
+
+  return;
+}
 
 #endif /* BAPARTY_H_ */
