@@ -808,7 +808,6 @@ gatherMsg(vector<byte>& sendMsg, vector< vector<byte> >& recvMsgs,
     }    
   }
 
-
   return;
 }
 
