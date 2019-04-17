@@ -657,16 +657,13 @@ void ProtocolParty<FieldType>::roundFunctionSyncForP1(vector<byte>& selfMessage,
 
 template <class FieldType>
 void ProtocolParty<FieldType>::recDataToP1(vector<byte>& selfMessage, vector<vector<byte>> &recBufs, int first, int last){
-    cout << m_partyId << "recThread " << first << " " << last << endl;
     for (int i=first; i < last; i++) {
         if(activePartyIDs[i] == m_partyId) {
             recBufs[i] = move(selfMessage);
         } else {
-            cout << m_partyId << "recDataToP1 " << recBufs[i].size() << " " << i << endl;
             activeParties[i]->getChannel()->read(recBufs[i].data(), recBufs[i].size());
         }
     }
-    cout << m_partyId << "recThreadComplete " << first << " " << last << endl;
 }
 
 
@@ -704,13 +701,11 @@ void ProtocolParty<FieldType>::sendFromP1(vector<byte> &sendBuf) {
 
 template <class FieldType>
 void ProtocolParty<FieldType>::sendDataFromP1(vector<byte> &sendBuf, int first, int last){
-    cout << m_partyId << " sendThread " << first << " " << last << endl;
     for(int i=first; i < last; i++) {
         if(activePartyIDs[i] != m_partyId) {
             activeParties[i]->getChannel()->write(sendBuf.data(), sendBuf.size());
         }
     }
-    cout << m_partyId << " sendThreadComplete " << first << " " << last << endl;
 }
 
 //
@@ -1895,6 +1890,7 @@ int ProtocolParty<FieldType>::processMultiplications(int lastMultGate)
 
     for(int i = 0; i < numProcessed; i++) {
         gateShareArr[outind[i]] = dr[i] * er[i] + dr[i] * b[i] + er[i] * a[i] + c[i];
+        cout << "Party: " << m_partyId << " Gate: m" << outind[i] << " output: " << gateShareArr[outind[i]] << endl;
     }
     return numProcessed;
 }
@@ -1903,24 +1899,29 @@ int ProtocolParty<FieldType>::processMultiplications(int lastMultGate)
 template <class FieldType>
 int ProtocolParty<FieldType>::processNotMult(){
     int count=0;
+    cout << m_partyId << "gateShareArr1";
+    printVector(gateShareArr);
     for(int k=circuit.getLayers()[currentCirciutLayer]; k < circuit.getLayers()[currentCirciutLayer+1]; k++)
     {
 
-
+        string gateType = "Unknown";
         // add gate
         if(circuit.getGates()[k].gateType == ADD)
         {
+            gateType = "Add";
             gateShareArr[circuit.getGates()[k].output] = gateShareArr[circuit.getGates()[k].input1] + gateShareArr[circuit.getGates()[k].input2];
             count++;
         }
 
         else if(circuit.getGates()[k].gateType == SUB)//sub gate
         {
+            gateType = "Sub";
             gateShareArr[circuit.getGates()[k].output] = gateShareArr[circuit.getGates()[k].input1] - gateShareArr[circuit.getGates()[k].input2];
             count++;
         }
         else if(circuit.getGates()[k].gateType == SCALAR)
         {
+            gateType = "Scalar";
             long scalar(circuit.getGates()[k].input2);
             FieldType e = field->GetElement(scalar);
             gateShareArr[circuit.getGates()[k].output] = gateShareArr[circuit.getGates()[k].input1] * e;
@@ -1928,6 +1929,7 @@ int ProtocolParty<FieldType>::processNotMult(){
         }
         else if(circuit.getGates()[k].gateType == SCALAR_ADD)
         {
+            gateType = "ScalarAdd";
             long scalar(circuit.getGates()[k].input2);
             FieldType e = field->GetElement(scalar);
             gateShareArr[circuit.getGates()[k].output] = gateShareArr[circuit.getGates()[k].input1] + e;
@@ -1935,12 +1937,18 @@ int ProtocolParty<FieldType>::processNotMult(){
         }
         else if(circuit.getGates()[k].gateType == RANDOM) 
         {
+            gateType = "Random";
             gateShareArr[circuit.getGates()[k].output] = get<0>(randomTriplesArray[randomSharesOffset]);
             randomSharesOffset++;
             count++;
         }
 
+        cout << "Party: " << m_partyId << " Gate: " << circuit.getGates()[k].output << "index: " << k << " output: " << gateShareArr[circuit.getGates()[k].output] << gateType << endl;
+
     }
+
+    cout << m_partyId << "gateShareArr2";
+    printVector(gateShareArr);
     return count;
 
 }
@@ -2060,7 +2068,7 @@ bool ProtocolParty<FieldType>::preparationPhase()
 template <class FieldType>
 void ProtocolParty<FieldType>::initializationPhase()
 {
-    gateShareArr.resize((M - circuit.getNrOfOutputGates())*2); // my share of the gate (for all gates)
+    gateShareArr.resize((M - circuit.getNrOfOutputGates())); // my share of the gate (for all gates)
 }
 
 //input s, share r, reconstruct r towards user, then user broadcasts s-r, so s-r + r = s
@@ -2073,6 +2081,9 @@ void ProtocolParty<FieldType>::inputPhase()
 
     // prepare the shares for the input
     //TODO: batch this
+    cout << "gateShareArr1";
+    printVector(gateShareArr);
+
     while(k < numOfInputGates)
     {
         if(circuit.getGates()[ind].gateType == INPUT) {
@@ -2080,38 +2091,51 @@ void ProtocolParty<FieldType>::inputPhase()
             int inputParty = circuit.getGates()[ind].party;
             FieldType randomShare = get<0>(randomTriplesArray[randomSharesOffset]); //[r]
             randomSharesOffset++;
-            { cout << "k: " << k << " ind: " << ind << " selfActive: " << selfActive << " partyId: " << m_partyId << "inputParty: " << inputParty << " Index: " << index << endl; }
             FieldType output = reconstructPrivate(randomShare, T, inputParty); //r or zero if not m_partyId
-            cout << m_partyId << "abc" << endl;
             if (inputParty == m_partyId) {
                 auto input = myInputs[index]; //maybe this gets messed up with ind or k? 
                 index++;
-                cout << m_partyId << "def" << endl;
+
                 //need to make sure random offsets sync up between active / inactive parties
                 FieldType s = field->GetElement(input); //s
                 vector<byte> sminusrbytes(field->getElementSizeInBytes());
                 FieldType smo = s - output;
                 field->elementToBytes(sminusrbytes.data(), smo);
-                cout << m_partyId << "ghi" << endl;
+
                 sendFromP1(sminusrbytes);
-                cout << m_partyId << "jkl" << endl;
-                gateShareArr[circuit.getGates()[ind].output] = randomShare + s - output;
+
+                int gateshareindex = circuit.getGates()[ind].output;
+                gateShareArr[gateshareindex] = randomShare + s - output;
+                cout << "Party: " << m_partyId << " Gate: " << ind << " Index " << gateshareindex << " RandomInput: " << gateShareArr[circuit.getGates()[ind].output] << endl;
             } else if(selfActive) {
-                cout << m_partyId << "mno" << endl;
+
                 vector<byte> sminusrbytes(field->getElementSizeInBytes());
-                cout << m_partyId << "pqr" << endl;
+
                 activeParties[inputParty]->getChannel()->read(sminusrbytes.data(), sminusrbytes.size());
-                cout << m_partyId << "stu" << endl;
-                gateShareArr[circuit.getGates()[ind].output] = randomShare + field->bytesToElement(sminusrbytes.data());
+
+                int gateshareindex = circuit.getGates()[ind].output;
+                gateShareArr[gateshareindex] = randomShare + field->bytesToElement(sminusrbytes.data());
+                cout << "Party: " << m_partyId << " Gate: " << ind << " Index " << gateshareindex << " RandomInput: " << gateShareArr[circuit.getGates()[ind].output] << endl;
             }
             k++;
             if(flag_print_timings) {
                 { cout << "Inputs: " << k << "/" << numOfInputGates << endl; }
             }
         }
+        
         ind++;
         if(ind >= M) {
             cout << "Ind too high! " << k << endl;
+        }
+    }
+
+    cout << "gateShareArr";
+    printVector(gateShareArr);
+
+    size_t numgates = circuit.getGates().size();
+    for(size_t i = 0; i < numgates; i++) {
+        if(circuit.getGates()[i].gateType == INPUT) {
+            cout << "Party: " << m_partyId << " Gate: i" << i << " output: " << gateShareArr[circuit.getGates()[i].output] << endl;
         }
     }
 }
@@ -2170,7 +2194,8 @@ void ProtocolParty<FieldType>::outputPhase()
 //            field->elementToBytes(sendBufsBytes[i].data() + (j * fieldByteSize), sendBufsElements[i][j]);
 //        }
 
-        field->elementVectorToByteVector(sendBufsElements[i], sendBufsBytes[i]);
+
+        encodeFieldElts(sendBufsElements[i], sendBufsBytes[i]);
     }
 
 
@@ -2190,7 +2215,6 @@ void ProtocolParty<FieldType>::outputPhase()
 
                 x1[i] = field->bytesToElement(recBufBytes[i].data() + (counter*fieldByteSize));
             }
-
 
             // my output: reconstruct received shares
             if (!checkConsistency(x1, T))
