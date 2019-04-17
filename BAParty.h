@@ -105,6 +105,7 @@ public:
   // trivial from consensus(): first dealer spread bit, then run consensus().
   void broadcastBit(bool& b, int rootId);
   void broadcastMsg(vector<byte>& msg, int msgSize, int rootId);
+  void spreadMsg(vector<byte>& msg, int msgSize, int rootId);
   void scatterMsg(vector< vector<byte> >& sendMsgs, vector<byte>& recvMsg,
                   int msgSize, int rootId);
   void gatherMsg(vector<byte>& sendMsg, vector< vector<byte> >& recvMsgs,
@@ -697,6 +698,13 @@ broadcastMsgForAll(vector<byte>& sendMsg, // input
 template <class FieldType>
 void BAParty<FieldType>::
 broadcastMsg(vector<byte>& msg, int msgSize, int rootId){
+  spreadMsg(msg, msgSize, rootId);
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+spreadMsg(vector<byte>& msg, int msgSize, int rootId){
   int nParties = _partySocket.size();
 
   if (rootId == _myId) {
@@ -724,6 +732,7 @@ broadcastMsg(vector<byte>& msg, int msgSize, int rootId){
   }
   return;
 }
+
 
 template <class FieldType>
 void BAParty<FieldType>::

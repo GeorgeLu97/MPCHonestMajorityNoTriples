@@ -61,9 +61,11 @@ private:
   int _myId;
   int _nActiveParties;
   int _bigT;
+  int _smallT;
   int _nThread;
   ArithmeticCircuit _circuit;
   TemplateField<FieldType>*_field;
+  FieldType _zero;
   
   // _alpha[i] is the field element of the party with id = i.
   // Note: every party has the same _alpha.
@@ -72,9 +74,7 @@ private:
   vector<FieldType> _beta;
   HIM<FieldType> _M;
   
-  vector<int> _inputSizes;
-
-  // subprotocol classes
+    // subprotocol classes
   BAParty<FieldType> _baParty;
   ECC<FieldType> _eccAlpha;
   ECC<FieldType> _eccBeta;
@@ -83,10 +83,18 @@ private:
   vector< shared_ptr<ProtocolPartyData> > _parties;
   // _activeMask[ partyId ] == 1 if partyId is active.
   vector<bool> _activeMask;
-  
-  // only store long value (not FieldType) to save memory
-  vector<FieldType> _input;
+
+  vector<int> _inputSizes;
   vector<long> _output;
+
+  int _inputOffset = 0;
+  vector<FieldType> _input;
+  int _singleRandomSharesOffset = 0;
+  vector<FieldType> _singleRandomShares;
+  int _singleZeroSharesOffset = 0;
+  vector<FieldType> _singleZeroShares;
+  int _tripleRandomSharesOffset = 0;
+  vector< vector<FieldType> >_tripleRandomShares;
 
 
   // ======== private functionalities ========
@@ -104,12 +112,13 @@ private:
   void firstNActiveParties(int N, vector<int>& activeIds);
   void lastNActiveParties(int N, vector<int>& activeIds);
 
+  // ---- helper round functions ----
   void scatterForDealers(vector<FieldType>& sendElms,
                          vector<FieldType>& recvElms,
                          vector<int>& dealerIds);
   void gatherForDealers(vector<FieldType>& sendElms,
-                         vector<FieldType>& recvElms,
-                         vector<int>& dealerIds);
+                        vector<FieldType>& recvElms,
+                        vector<int>& dealerIds);
   void scatterForAll(vector<FieldType>& sendElms,
                      vector<FieldType>& recvElms);
 
@@ -128,6 +137,11 @@ private:
   void robustBatchBroadcast(vector<FieldType>& sendElms,
                             vector< vector<FieldType> >& recvElms,
                             int nElements,  vector<int>& dealerIds);
+  // robust reconstruct nInputs # of input.
+  // -- only works when nInputs <= _bigT
+  void linearInput(vector< vector<FieldType> >& recvInputs,
+                   int nInputs,  vector<int>& dealerIds);
+  
 
   // ---- Random shares and Reconstructions ----
   // create T random shares among parties. return false if fails
@@ -209,6 +223,8 @@ makeField(){
   }else if(fieldType == "Zp"){
     _field = new TemplateField<FieldType>(2147483647);
   }
+  
+  _zero = *(_field->GetZero());
   return;  
 }
 
@@ -258,7 +274,8 @@ LinearParty(int argc, char* argv[])
   _myId = stoi(getArg("partyID"));
   _nActiveParties = stoi(getArg("partiesNumber"));
   _nThread = stoi(getArg("numThreads"));
-  _bigT = _nActiveParties - 2*(_nActiveParties / 3);
+  _smallT = (_nActiveParties -1)/ 3;
+  _bigT = _nActiveParties - 2*_smallT;
   
   makeField();
   makeParties();
@@ -421,6 +438,7 @@ void LinearParty<FieldType>::
 robustBatchBroadcast(vector<FieldType>& sendElms, // input
                      vector< vector<FieldType> >& recvElms, // output
                      int nElements,  vector<int>& dealerIds){
+
   // sort dealerIds. 
   int nParties = _parties.size();
   int nDealers = dealerIds.size();
@@ -431,7 +449,7 @@ robustBatchBroadcast(vector<FieldType>& sendElms, // input
   prepareExpandedElms( sendElms, sendExpandedElms );
   vector<FieldType> recvExpandedElms(nDealers);
   scatterForDealers(sendExpandedElms, recvExpandedElms, dealerIds);
-
+  
   // each party broadcast all received shares
   int msgSize = elmSize * nDealers;
   vector<byte> sendMsg;
@@ -471,7 +489,7 @@ randomSecretePoly(FieldType &s, int degree,
   polynomial.resize(degree+1);
   polynomial[0] = s;
   for (int i = 0; i < degree; i++) {
-    polynomial[i+1] = _field->random();
+    polynomial[i+1] = _field->Random();
   }
 
   return;
@@ -508,7 +526,6 @@ scatterForDealers(vector<FieldType>& sendElms,
       decodeFieldElt(recvMsg, recvElms[i]);
     }
   }
-
   return;
 }
 
@@ -561,7 +578,7 @@ scatterForAll(vector<FieldType>& sendElms,
     }
   }
 
-  scatterForDealers(sendElms, recvElms);
+  scatterForDealers(sendElms, recvElms, dealers);
   return;
 }
 
@@ -612,7 +629,7 @@ singleShareRandom(int d, vector<FieldType>& shares) {
   int nPartiesInc = _parties.size() + 1;
 
   // -- every party choose a random secrete
-  FieldType r = _field->random();
+  FieldType r = _field->Random();
   vector<FieldType> f;
   vector<FieldType> sendShares(nPartiesInc);
   randomSecretePoly(r, d, f);
@@ -642,6 +659,8 @@ singleShareRandom(int d, vector<FieldType>& shares) {
   // -- the (n'-T) verifiers verify (n'-T) received shares
   vector<FieldType> g;
   happiness &= _eccAlpha.reconstruct(toVerifyShares, d, g);
+  assert(happiness);
+  
   shares.resize(_bigT);
   vector<int> activeSharers(_bigT);
   firstNActiveParties(_bigT, activeSharers);
@@ -676,7 +695,7 @@ singleShareZero(int d, vector<FieldType> shares) {
 template <class FieldType>
 FieldType LinearParty<FieldType>::
 reconstructPrivate(FieldType& share, int degree, int root){
-  FieldType result = _field->GetZero();
+  FieldType result = _zero;
 
   vector<byte> msg;
   vector< vector<byte> > recvMsgs;
@@ -686,7 +705,7 @@ reconstructPrivate(FieldType& share, int degree, int root){
   int nParties  = _parties.size();
   if (_myId == root) {
     // root: receive shares, and decode
-    vector<FieldType> shares(nPartiesInc, _field->GetZero);
+    vector<FieldType> shares(nPartiesInc, _zero);
     shares[_myId] = share;
     
     recvMsgs.resize(nParties);
@@ -694,15 +713,21 @@ reconstructPrivate(FieldType& share, int degree, int root){
 
     for (int i = 0; i < nParties; i++) {
       if (_activeMask[ _parties[i]->getID() ]) {
-        decodeFieldElt(recvMsgs, shares[ _parties[i]->getID() ]);
+        decodeFieldElt(recvMsgs[i], shares[ _parties[i]->getID() ]);
       }
     }
 
     vector<FieldType> polynomial;
     bool success = _eccAlpha.reconstruct(shares, degree, polynomial);
-    // assert(success);
-    
-    result = _eccAlpha.evalPolynomial(_field->GetZero(), polynomial);
+    if (!success) {
+      cout << "degree is " <<  degree << endl;
+      for (auto e : shares) {
+        cout << e << " ";
+      }
+      cout << endl;
+    }
+
+    result = _eccAlpha.evalPolynomial(_zero, polynomial);
 
   } else {
     // non-root party: send my share
@@ -713,8 +738,8 @@ reconstructPrivate(FieldType& share, int degree, int root){
 
   return result;
 }
-// reconstruct (at most) T elements towards all. return false if fails.
-// Note: robust if degree <= T.
+// reconstruct (at most) _bigT elements towards all. return false if fails.
+// Note: robust if degree <= _smallT.
 // -- treat shares as a polynomial
 // -- expand to n points by evaluating at beta
 // -- send to corresponding parties (all-to-all)
@@ -729,6 +754,7 @@ reconstructPublic(vector<FieldType>& shares,
   int nParties = _parties.size();
   int nPartiesInc = _parties.size() + 1;
   int msgSize = _field->getElementSizeInBytes();
+  int batchSize = shares.size();
   
   // -- treat shares as a polynomial
   // -- expand to n points by evaluating at beta
@@ -748,7 +774,8 @@ reconstructPublic(vector<FieldType>& shares,
   if (!success) {
     return false;
   }
-  FieldType f0 = _eccAlpha.evalPolynomial(_field->GetZero(), f);
+  FieldType f0;
+  f0 = _eccAlpha.evalPolynomial(_zero, f);
   vector<byte> sendMsg(msgSize);
   vector< vector<byte> > recvMsgs(nParties, vector<byte>(msgSize));
   encodeFieldElt(f0, sendMsg);
@@ -765,7 +792,7 @@ reconstructPublic(vector<FieldType>& shares,
 
     decodeFieldElt(recvMsgs[i], recvF0[ _parties[i]->getID() ]);
   }
-  success = _eccBeta.reconstruct(recvF0, degree, results);
+  success = _eccBeta.reconstruct(recvF0, batchSize-1, results);
   return success;
 }
 
@@ -778,6 +805,7 @@ collectInputIds(vector<int> &inputSizes,
                 int maxBatch) {
 
   int nPartiesInc = inputSizes.size();
+  inputParties.clear();
   
   // -- find first party with input
   int firstInputParty = 0;
@@ -822,41 +850,115 @@ storeRecvDealerInputs(vector<FieldType>& totalInputs,
   return;
 }
 
+
 // From BTH08 Appendex: batch input sharing (K dealers each T inputs)
 // -- assuming everyone already have enough random sharings
 // -- For K*T times: ReconsPriv() a random share to corresponding Dealer.
 // -- Each Dealer computes T differences
 // -- All dealers batch broadcast its T differences
 // -- Each party locally compute input shares
-// -- TODO currently only share inputs in the clear.
+template <class FieldType>
+void LinearParty<FieldType>::
+linearInput(vector< vector<FieldType> >& recvInputs,
+            int nInputs,  vector<int>& dealerIds) {
+
+  int nDealers = dealerIds.size();
+  int nPartiesInc = _parties.size() + 1;
+  int msgSize = _field->getElementSizeInBytes();
+  recvInputs.resize(nDealers);
+  sort(dealerIds.begin(), dealerIds.end());
+
+  // -- store random shares in recvInputs first
+  // -- later will add ``offsets'' to it
+  for (int i = 0; i < nDealers; i++) {
+    recvInputs[i].resize(nInputs);
+    for (int j = 0; j < nInputs; j++) {
+      recvInputs[i][j] = _singleRandomShares[_singleRandomSharesOffset++];
+    }
+  }
+
+  // -- For K*T times: ReconsPriv() a random share to corresponding Dealer.
+  // -- Each Dealer computes T differences
+  vector<FieldType> sendOffsets(nInputs);
+  for (int i = 0; i < nDealers; i++) {
+    int dealerId = dealerIds[i];
+    for (int j = 0; j < nInputs; j++) {
+      FieldType result = 
+        reconstructPrivate(recvInputs[i][j], _smallT, dealerId);
+
+      if (dealerId == _myId) {
+        sendOffsets[j] = _input[_inputOffset++] - result;
+      }
+    }
+  }
+
+  // -- All dealers batch broadcast its T differences
+  vector< vector<FieldType> > recvOffsets(nPartiesInc);
+  robustBatchBroadcast(sendOffsets, recvOffsets, nInputs, dealerIds);
+
+  // -- Each party locally compute input shares
+  for (int i = 0; i < nDealers; i++) {
+    for (int j = 0; j < nInputs; j++) {
+      recvInputs[i][j] += recvOffsets[i][j];
+    }
+  }
+
+  return;
+}
+
+// runs linearInput() repeatedly until all inputs are shared.
+// -- TODO currently reconstructPublic all inputs after sharing
 template <class FieldType>
 void LinearParty<FieldType>::
 InputPhase(){
 
-  cout << "-------- enter input phase --------" << endl;
-    _wireValues.resize( _circuit.getNrOfGates() );
+  _wireValues.resize( _circuit.getNrOfGates() );
   int nPartiesInc = _parties.size() + 1;
-  cout << "bigT is " << _bigT << endl;
   
   // batch share inputs until all inputs are shared
-  vector< vector<FieldType> > receivedInputs(nPartiesInc);
+  vector< vector<FieldType> > receivedInputShares(nPartiesInc);
   vector<int> inputParties;
   vector<int> inputsToSend = _inputSizes;
   int minInputs = collectInputIds(inputsToSend, inputParties, _bigT);
-  auto inputHead = _input.begin();
   while(minInputs > 0){
-    cout << "sending " << minInputs << " inputs" << endl;
-    
-    vector<FieldType> batchInput(inputHead, inputHead+minInputs);
-    inputHead += minInputs;
     vector< vector<FieldType> > batchRecvInput;
-    robustBatchBroadcast(batchInput, batchRecvInput, minInputs, inputParties);
-    storeRecvDealerInputs(receivedInputs, batchRecvInput, inputParties);
+    linearInput(batchRecvInput, minInputs, inputParties);
+    storeRecvDealerInputs(receivedInputShares, batchRecvInput, inputParties);
     minInputs = collectInputIds(inputsToSend, inputParties, _bigT);
   }
 
+  cout << "-------- finished input sharing" << endl;
+  
+  // batch reconstruct inputs until all inputs are reconstructed
+  vector< vector<FieldType> > receivedInputsClear(nPartiesInc);
+  vector<FieldType> reconsShares;
+  vector<FieldType> reconsResults;
+  for (int i = 0; i < nPartiesInc; i++) {
+    int nInputs = receivedInputShares[i].size();
+    receivedInputsClear[i].resize( nInputs );
+    if (nInputs == 0) {
+      continue;
+    }
 
-  // plug in input values
+    for (int j = 0; j < nInputs; j += _bigT) {
+      int nShares = (nInputs - j) < _bigT ? (nInputs - j) : _bigT;
+            
+      reconsShares.resize(nShares);
+      for (int k = 0; k < nShares; k++) {
+        reconsShares[k] = receivedInputShares[i][j+k];
+      }
+
+      reconstructPublic(reconsShares, reconsResults, _smallT);
+      
+      for (int k = 0; k < nShares; k++) {
+        receivedInputsClear[i][j+k] = reconsResults[k];
+      }
+    }
+  }
+
+  cout << "-------- finished input reconstruction" << endl;
+
+  // plug in (reconstructed) clear input values
   int nInputGates = _circuit.getNrOfInputGates();
   const vector<TGate> gates = _circuit.getGates();
   vector<int> offsets(nPartiesInc);
@@ -866,7 +968,7 @@ InputPhase(){
     if (gates[i].gateType == INPUT) {
       int curParty = gates[i].party;
       int curOffset = offsets[ curParty ]++;
-      _wireValues[ gates[i].output ] = receivedInputs[curParty][curOffset];
+      _wireValues[ gates[i].output ] = receivedInputsClear[curParty][curOffset];
       i++;
     }
   }
@@ -909,7 +1011,7 @@ OutputPhase(){
   int nOutputGates = _circuit.getNrOfOutputGates();
   const vector<TGate> gates = _circuit.getGates();
 
-  cout << "==== there are " << nOutputGates
+  cout << "---- there are " << nOutputGates
        << " output gates" << endl;
 
   for (auto g : gates) {
@@ -937,11 +1039,30 @@ OutputPhase(){
 
 
 // runs preparation phase:
-// -- TODO: generate random shares for input and random gates
+// -- generate random shares for input and random gates
 // -- TODO: generating shares random triples
 template <class FieldType>
 void LinearParty<FieldType>::
 runOffline(){
+  // -- generate random shares for input and random gates
+  int nSingleShares =
+    _circuit.getNrOfInputGates() + _circuit.getNrOfRandomGates();
+  int nBatches = nSingleShares / _bigT;
+
+  cout << "running singleShareRandom in "
+       << nBatches << " batches" << endl;
+  
+  _singleRandomShares.resize(nBatches * _bigT);
+  vector<FieldType> batchResult;
+  bool happiness = true;
+  for (int i = 0; i < nBatches; i++) {
+    happiness = singleShareRandom(_smallT, batchResult);
+    for (int j = 0; j < _bigT; j++) {
+      _singleRandomShares[ i*_bigT + j ] = batchResult[j];
+    }
+  }
+
+  cout << "---- finished offline phase ----" << endl;
   return;
 }
 
@@ -961,3 +1082,4 @@ runOnline(){
 
 
 #endif /* LINEARPARTY_H_ */
+
