@@ -287,10 +287,11 @@ LinearParty(int argc, char* argv[])
   _baParty.setNumThreads(_nThread);
   _baParty.setAlphaBeta(_alpha, _beta);
   _baParty.setHIM(_M);
+  _eccAlpha.setField(_field); // need to set field first!
   _eccAlpha.setAlpha(_alpha);
-  _eccAlpha.setField(_field);
-  _eccBeta.setAlpha(_beta);
   _eccBeta.setField(_field);
+  _eccBeta.setAlpha(_beta);
+  
       
   // build _circuit
   _circuit.readCircuit( (getArg("circuitFile")).c_str() );
@@ -538,8 +539,10 @@ gatherForDealers(vector<FieldType>& sendElms,
   int nParties = _parties.size();
   int nPartiesInc = _parties.size() +1;
 
-  recvElms.resize(nPartiesInc);
+  
   sendElms.resize(nDealers);
+  recvElms.clear(); // <---- non-dealer can check recvElms.size()
+  // <---------------------- to know that they are not dealers
   
   int msgSize = _field->getElementSizeInBytes();
   vector<byte> sendMsg(msgSize);
@@ -548,6 +551,7 @@ gatherForDealers(vector<FieldType>& sendElms,
     int dealerId = dealerIds[i];
 
     if ( dealerId == _myId) {
+      recvElms.resize(nPartiesInc);
       recvElms[_myId] = sendElms[i];
       _baParty.gatherMsg(sendMsg, recvMsgs, msgSize, dealerId);
       
@@ -657,10 +661,16 @@ singleShareRandom(int d, vector<FieldType>& shares, FieldType& checkVal) {
   gatherForDealers(verifyShares, toVerifyShares, dealers);
 
   // -- the (n'-T) verifiers verify (n'-T) received shares
-  vector<FieldType> g;
-  happiness &= _eccAlpha.reconstruct(toVerifyShares, d, g);
-  assert(happiness);
-  
+  checkVal = *(_field->GetZero()); // default value
+  if (toVerifyShares.size() > 0) {
+    vector<FieldType> g;
+    happiness &= _eccAlpha.reconstruct(toVerifyShares, d, g);
+    if (happiness) {
+      checkVal = _eccAlpha.evalPolynomial(*(_field->GetZero()), g);
+    }
+  }
+
+  // -- output the first _bigT shares from active parties
   shares.resize(_bigT);
   vector<int> activeSharers(_bigT);
   firstNActiveParties(_bigT, activeSharers);
@@ -672,6 +682,8 @@ singleShareRandom(int d, vector<FieldType>& shares, FieldType& checkVal) {
 }
 
 // similarly create T random multiple-shares among parties
+// -- For a verifyer, check degree of received shares
+// -- and also that the reconstruced values are equal
 template <class FieldType>
 bool LinearParty<FieldType>::
 multipleShareRandom(const vector<int> degrees,
@@ -679,6 +691,17 @@ multipleShareRandom(const vector<int> degrees,
   bool happiness = true;
   int nShares = degrees.size();
   int nPartiesInc = _parties.size() + 1;
+  shares.resize(nShares);
+  vector<FieldType> checkVals(nShares);
+
+  for (int i = 0; i < nShares; i++) {
+    int d = degrees[i];
+    happiness &= singleShareRandom(d, shares[i], checkVals[i]);
+  }
+
+  for (int i = 0; i < nShares-1; i++) {
+    happiness &= (checkVals[i] == checkVals[i+1]);
+  }
 
   return happiness;
 }
