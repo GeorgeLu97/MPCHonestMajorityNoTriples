@@ -36,12 +36,6 @@ using namespace std::chrono;
 //
 
 // TODO:
-// 1. change all FieldType(n) to _field->getElement(n);
-// -- GF2E will not properly initialize!!
-// -- also do this for ECC.h and BAParty.h
-// -- need to add _field member for them too.
-// 1.2 only loop on active parties!
-// 1.3 add _alphaMask to _ecc.
 // 1.4 check that all inactive elements are 0.
 
 // 2. 4 consistency functionality
@@ -145,15 +139,19 @@ private:
 
   // ---- Random shares and Reconstructions ----
   // create T random shares among parties. return false if fails
+  // -- For a verifier party in the protocol,
+  // -- ``checkVal'' is the reconstructed polinomial evaluated at 0.
+  // -- For others, just 0.
   // Note: non-robust.
-  bool singleShareRandom(int d, vector<FieldType>& shares);
+  bool singleShareRandom(int d, vector<FieldType>& shares,
+                         FieldType& checkVal);
   // similarly create T random multiple-shares among parties
   bool multipleShareRandom(const vector<int> degrees,
                            vector< vector<FieldType> >& shares);
   // similarly create T random shares of 0 among parties
   bool singleShareZero(int d, vector<FieldType> shares);
 
-  // reconstruct an element towards root. return false if fails
+  // reconstruct an element towards root. return 0 if fails
   // Note: robust if degree <= T. 
   FieldType reconstructPrivate(FieldType& share, int degree, int root);
   // reconstruct (at most) T elements towards all. return false if fails.
@@ -290,7 +288,9 @@ LinearParty(int argc, char* argv[])
   _baParty.setAlphaBeta(_alpha, _beta);
   _baParty.setHIM(_M);
   _eccAlpha.setAlpha(_alpha);
+  _eccAlpha.setField(_field);
   _eccBeta.setAlpha(_beta);
+  _eccBeta.setField(_field);
       
   // build _circuit
   _circuit.readCircuit( (getArg("circuitFile")).c_str() );
@@ -624,7 +624,7 @@ firstNActiveParties(int firstN, vector<int>& activeIds) {
 // -- the (n'-T) verifiers verify (n'-T) received shares
 template <class FieldType>
 bool LinearParty<FieldType>::
-singleShareRandom(int d, vector<FieldType>& shares) {
+singleShareRandom(int d, vector<FieldType>& shares, FieldType& checkVal) {
   bool happiness = true;
   int nPartiesInc = _parties.size() + 1;
 
@@ -672,12 +672,15 @@ singleShareRandom(int d, vector<FieldType>& shares) {
 }
 
 // similarly create T random multiple-shares among parties
-// -- TODO: implement
 template <class FieldType>
 bool LinearParty<FieldType>::
 multipleShareRandom(const vector<int> degrees,
                     vector< vector<FieldType> > &shares) {
-  return true;  
+  bool happiness = true;
+  int nShares = degrees.size();
+  int nPartiesInc = _parties.size() + 1;
+
+  return happiness;
 }
 
 // similarly create T random shares of 0 among parties
@@ -690,7 +693,7 @@ singleShareZero(int d, vector<FieldType> shares) {
 
 
 
-// reconstruct an element towards root. return false if fails
+// reconstruct an element towards root. return 0 if fails
 // Note: robust if degree <= T.
 template <class FieldType>
 FieldType LinearParty<FieldType>::
@@ -1056,7 +1059,8 @@ runOffline(){
   vector<FieldType> batchResult;
   bool happiness = true;
   for (int i = 0; i < nBatches; i++) {
-    happiness = singleShareRandom(_smallT, batchResult);
+    FieldType tmp;
+    happiness &= singleShareRandom(_smallT, batchResult, tmp);
     for (int j = 0; j < _bigT; j++) {
       _singleRandomShares[ i*_bigT + j ] = batchResult[j];
     }

@@ -42,8 +42,12 @@ class ECC{
 private:
   vector<FieldType> _g0;
   vector<FieldType> _alpha;
+  vector<bool> _alphaMask;
+  TemplateField<FieldType>*_field;
   
   void trimZeroes(vector<FieldType>& a);
+
+  void applyMask(vector<FieldType>& fullVec);
 
   void addToPolynomial(vector<FieldType>& p1, // input
                        vector<FieldType>& p2);
@@ -90,6 +94,9 @@ public:
   
   // the class version: using a fixed alpha vector as x values
   void setAlpha(vector<FieldType>& alpha);
+  void setField(TemplateField<FieldType>* field);
+  void setPartyInactive(int partyId);
+  
   
   
   void interpolate(vector<FieldType>& y,
@@ -115,7 +122,7 @@ template<class FieldType>
 void ECC<FieldType>::
 trimZeroes(vector<FieldType>& a) {
   int i = a.size();
-  FieldType Zero = FieldType(0);
+  FieldType Zero = *(_field->GetZero());
   while(i > 0 && a[i-1] == Zero) { i--; }
   a.resize(i);
   return;
@@ -129,7 +136,7 @@ addToPolynomial(vector<FieldType>& p1, // input
   int p1_size = p1.size();
   int p2_size = p2.size();
   if(p1_size > p2_size){
-    p2.resize( p1_size, FieldType(0) );
+    p2.resize( p1_size, *(_field->GetZero()));
   }
 
   for(int i=0; i<p1_size; i++){
@@ -146,10 +153,10 @@ multToPolynomial(vector<FieldType>& p1,
 
   int p1_size = p1.size();
   int p2_size = p2.size();
-  vector<FieldType> tempProduct(p1_size + p2_size - 1, FieldType(0));
+  vector<FieldType> tempProduct(p1_size + p2_size - 1, *(_field->GetZero()));
 
   for(int i=0; i<p1_size; i++){
-    if(p1[i] == FieldType(0)){
+    if(p1[i] == *(_field->GetZero()) ){
       continue;
     }
     for(int j=0; j<p2_size; j++){
@@ -199,7 +206,7 @@ dividePolynomial(vector<FieldType>& p1,
     FieldType topCoeff = r[ p2Size + i -1] / p2[p2Size-1];
 
     q[i] = topCoeff;
-    vector<FieldType> xi(i+1, FieldType(0));
+    vector<FieldType> xi(i+1, *(_field->GetZero()) );
     xi[i] = xi[i] - topCoeff;
     vector<FieldType> p2Tmp = p2;
     
@@ -227,7 +234,7 @@ extendedEuclideanPartial(vector<FieldType>& p1, // input
   if(rDeg < minDegree){
     // keep reminder == (a1 = 1, a2 = 0)
     a1.resize(1);
-    a1[0] = FieldType(1);
+    a1[0] = *(_field->GetOne() );
     a2.resize(0);
     r = p1;
     return;
@@ -238,9 +245,9 @@ extendedEuclideanPartial(vector<FieldType>& p1, // input
   extendedEuclideanPartial(remainder, p1, nextA1, nextA2, r, minDegree);
 
   // a1 = nextA2 - quotient * nextA1
-  scaleToPolynomial( FieldType(0) - FieldType(1), a1);
+  scaleToPolynomial( *(_field->GetZero())  - *(_field->GetOne()), a1);
   multToPolynomial(nextA1, a1);
-  addToPolynomial(nextA2, a1);
+  addToPolynomial(nextA2, a1); 
   a2 = nextA1;
   return;
 }
@@ -262,7 +269,7 @@ evalPolynomial(FieldType x,
   int degree = polynomial.size() - 1;
   // assert(degree >= 0);
   FieldType result = polynomial[0];
-  FieldType x_value = FieldType(1);
+  FieldType x_value = *(_field->GetOne());
   for(int i=0; i<degree; i++){
     x_value *= x;
     result += polynomial[i+1] * x_value;
@@ -281,23 +288,23 @@ interpolate(vector<FieldType>& x, // input
   // assert(y.size() == x.size());
   int nPoints = y.size();
   int degree = nPoints - 1;
-  vector<FieldType> result(nPoints, FieldType(0));
+  vector<FieldType> result(nPoints,  *(_field->GetZero()));
 
   // ---- O(n^2) to compute all numerators ----
   vector< vector<FieldType> > numerator_before_i(nPoints);
   vector< vector<FieldType> > numerator_skip_i(nPoints);
   // fill-in numerator_before_i from left to right
-  numerator_before_i[0] = vector<FieldType>(1, FieldType(1));
+  numerator_before_i[0] = vector<FieldType>(1, *(_field->GetOne()));
   for(int i=1; i<nPoints; i++){
-    numerator_before_i[i] = vector<FieldType>( 2, FieldType(1) );
-    numerator_before_i[i][0] = FieldType(0) - x[i-1];
+    numerator_before_i[i] = vector<FieldType>( 2, *(_field->GetOne()) );
+    numerator_before_i[i][0] =  *(_field->GetZero()) - x[i-1];
     multToPolynomial( numerator_before_i[i-1], numerator_before_i[i] );
   }
   // fill-in numerator_after_i from right to left
-  numerator_skip_i[nPoints-1] = vector<FieldType>(1, FieldType(1));
+  numerator_skip_i[nPoints-1] = vector<FieldType>(1, *(_field->GetOne()));
   for(int i=nPoints-2; i>=0; i--){
-    numerator_skip_i[i] = vector<FieldType>(2, FieldType(1));
-    numerator_skip_i[i][0] = FieldType(0) - x[i+1];
+    numerator_skip_i[i] = vector<FieldType>(2, *(_field->GetOne()));
+    numerator_skip_i[i][0] =  *(_field->GetZero()) - x[i+1];
     multToPolynomial( numerator_skip_i[i+1], numerator_skip_i[i] );
   }
   // multiply before_i and after_i to get skip_i
@@ -322,13 +329,31 @@ interpolate(vector<FieldType>& x, // input
   return;
 }
 
+template <class FieldType>
+void ECC<FieldType>::
+applyMask(vector<FieldType> &fullVec) {
+  int nActive = 0;
+  int nTotal = _alpha.size();
+  for (int i = 0; i < nTotal; i++) {
+    if (_alphaMask[i]) {
+      fullVec[nActive++] = fullVec[i];
+    }
+  }
+  fullVec.resize(nActive);
+  return;
+}
 
 template <class FieldType>
 void ECC<FieldType>::
 interpolate(vector<FieldType>& y,
             vector<FieldType>& polynomial){
   // use _alpha as x.
-  interpolate(_alpha, y, polynomial);
+  vector<FieldType> activeAlpha = _alpha;
+  vector<FieldType> activeY = y;
+  applyMask(activeAlpha);
+  applyMask(activeY);
+  
+  interpolate(activeAlpha, activeY, polynomial);
   return;
 }
 
@@ -339,26 +364,40 @@ setAlpha(vector<FieldType>& alpha){
 
   trimZeroes(alpha);
   _alpha = alpha;
-
   int nPoints = _alpha.size();
+  _alphaMask.clear();
+  _alphaMask.resize(nPoints, true);
 
   if(nPoints == 0){
     return;
   }
 
   _g0.clear();
-  _g0.resize(2, FieldType(1));
-  _g0[0] = FieldType(0) - alpha[0];
-  vector<FieldType> factor(2, FieldType(1));
+  _g0.resize(2, *(_field->GetOne()));
+  _g0[0] =  *(_field->GetZero()) - alpha[0];
+  vector<FieldType> factor(2, *(_field->GetOne()));
 
   for(int i=1; i<nPoints; i++){
-    factor[0] = FieldType(0) - alpha[i];
+    factor[0] =  *(_field->GetZero()) - alpha[i];
     multToPolynomial(factor, _g0);
   }
   
   return;
 }
 
+template<class FieldType> 
+void ECC<FieldType>::
+setField(TemplateField<FieldType>* field){
+  _field = field;
+  return;
+}
+
+template <class FieldType>
+void ECC<FieldType>::
+setPartyInactive(int partyId) {
+  _alphaMask[partyId] = false;
+  return;
+}
 
 template <class FieldType>
 void ECC<FieldType>::
@@ -421,7 +460,12 @@ reconstruct(vector<FieldType>& code, // input
             int degree,
             vector<FieldType>& polynomial){
 
-  return reconstruct(_alpha, _g0, code, degree, polynomial);
+  vector<FieldType> activeAlpha = _alpha;
+  vector<FieldType> activeCode = code;
+  applyMask(activeAlpha);
+  applyMask(activeCode);
+
+  return reconstruct(activeAlpha, _g0, activeCode, degree, polynomial);
 }
 
 
