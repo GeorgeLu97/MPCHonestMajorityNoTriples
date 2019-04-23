@@ -145,6 +145,10 @@ private:
   // Note: non-robust.
   bool singleShareRandom(int d, vector<FieldType>& shares,
                          FieldType& checkVal);
+
+  // instead of choosing a random to share, each party takes a input to share
+  bool singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
+                          FieldType& checkVal);
   // similarly create T random multiple-shares among parties
   bool multipleShareRandom(const vector<int> degrees,
                            vector< vector<FieldType> >& shares);
@@ -152,10 +156,8 @@ private:
   bool singleShareZero(int d, vector<FieldType> shares);
 
   // reconstruct an element towards root. return 0 if fails
-  // Note: robust if degree <= T. 
   FieldType reconstructPrivate(FieldType& share, int degree, int root);
   // reconstruct (at most) T elements towards all. return false if fails.
-  // Note: robust if degree <= T.
   bool reconstructPublic(vector<FieldType>& shares,
                          vector<FieldType>& results, int degree);
 
@@ -622,18 +624,21 @@ firstNActiveParties(int firstN, vector<int>& activeIds) {
 
 // create T random shares among parties. return false if fails
 // Note: non-robust.
-// -- every party choose a random secrete, and share with all others.
+// -- every party takes input a secrete, and share with all others.
 // -- every party applies HIM on received shares
 // -- every party send transformedShares of T+1 ... n' to crrspnd. parties
 // -- the (n'-T) verifiers verify (n'-T) received shares
 template <class FieldType>
 bool LinearParty<FieldType>::
-singleShareRandom(int d, vector<FieldType>& shares, FieldType& checkVal) {
+singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
+                  FieldType& checkVal) {
+
   bool happiness = true;
   int nPartiesInc = _parties.size() + 1;
 
   // -- every party choose a random secrete
-  FieldType r = _field->Random();
+  // FieldType r = _field->Random();
+  FieldType r = s;
   vector<FieldType> f;
   vector<FieldType> sendShares(nPartiesInc);
   randomSecretePoly(r, d, f);
@@ -679,6 +684,16 @@ singleShareRandom(int d, vector<FieldType>& shares, FieldType& checkVal) {
   }
 
   return happiness;
+  
+}
+
+// choose a random secrete, and run singleShareSecrete
+template <class FieldType>
+bool LinearParty<FieldType>::
+singleShareRandom(int d, vector<FieldType>& shares, FieldType& checkVal) {
+  bool happiness = true;
+  FieldType r = _field->Random();
+  return singleShareSecrete(r, d, shares, checkVal);
 }
 
 // similarly create T random multiple-shares among parties
@@ -690,13 +705,13 @@ multipleShareRandom(const vector<int> degrees,
                     vector< vector<FieldType> > &shares) {
   bool happiness = true;
   int nShares = degrees.size();
-  int nPartiesInc = _parties.size() + 1;
   shares.resize(nShares);
+  FieldType r = _field->Random();
   vector<FieldType> checkVals(nShares);
 
   for (int i = 0; i < nShares; i++) {
     int d = degrees[i];
-    happiness &= singleShareRandom(d, shares[i], checkVals[i]);
+    happiness &= singleShareSecrete(r, d, shares[i], checkVals[i]);
   }
 
   for (int i = 0; i < nShares-1; i++) {
@@ -707,11 +722,10 @@ multipleShareRandom(const vector<int> degrees,
 }
 
 // similarly create T random shares of 0 among parties
-// -- TODO implement
 template <class FieldType>
 bool LinearParty<FieldType>::
 singleShareZero(int d, vector<FieldType> shares) {
-  return true;
+  
 }
 
 
