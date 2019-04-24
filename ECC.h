@@ -412,7 +412,7 @@ setPartyInactive(int partyId) {
     // nothing to do.
     return;
   }
-  // other wise, set mask
+  // otherwise, set mask
   _alphaMask[partyId] = false;
 
   // and also recompute _g0

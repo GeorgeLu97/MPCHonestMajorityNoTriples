@@ -85,6 +85,8 @@ private:
   int _singleZeroSharesOffset = 0;
   vector<FieldType> _singleZeroShares;
 
+  vector<FieldType> _wireShares;
+
 
   // ======== private functionalities ========
   
@@ -112,6 +114,7 @@ private:
                      vector<FieldType>& rShareT2, // input, a t-share
                      vector<FieldType>& rShareT3, // input, a t-share
                      vector<FieldType>& rShareNp); // output, a (n'-1)-share
+  void eliminateParties(const vector<int>& elimIds);
   
   // check if points lie on a degree d polynomial
   bool checkPolynomial(vector<FieldType>& y, int d, vector<FieldType>& g);
@@ -179,6 +182,12 @@ private:
   // ---- fault localization for different subprotocols ----
   // fault localization for checkConsistency()
   void faultLocalizeConsistency(vector<int>& elimIds);
+  void faultLocalizeEvalSeg(vector<int>& elimIds);
+
+  // ---- PE versions ----
+  bool generateTuplesPE(vector< vector<FieldType> >& a,
+                        vector< vector<FieldType> >& b,
+                        vector<FieldType> c, vector<int>& elimIds);
   
 
   // ---- main subprotocols ----
@@ -200,13 +209,15 @@ private:
   FieldType evalMultGate(int kingId, FieldType& xShare, FieldType& yShare,
                          FieldType& aShareT, FieldType& aShareNp,
                          FieldType& bShareT, FieldType& bShareNp,
-                         FieldType& cShareT);
+                         FieldType& cShareT, FieldType& d, FieldType& e);
   bool faultDetection(bool happiness);
   bool checkConsistency(int kingId, vector<FieldType>& vals,
                         vector<int>& elimIds);
+  bool evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds);
   // generate _bigT random 4-consistent tuples or return false
   // Called QuadrupleShareRandom in the new paper
   bool generate4Tuples(vector< vector<FieldType> >& rTuple);
+  bool check4Consistency();
 
 
   // From new paper =output()=
@@ -228,7 +239,7 @@ public:
 
   // ======== testing functionalities ========
 
-  vector<FieldType> _wireValues;
+  
     
 };
 
@@ -993,10 +1004,30 @@ generateTuples(vector< vector<FieldType> >& a,
   b.resize(2); // for a and b. 
   c.resize(_bigT);
   for (int i = 0; i < _bigT; i++) {
-    c = rShares[0][i] + reconsDs[i];
+    c[i] = rShares[0][i] + reconsDs[i];
   }
 
   return happiness;
+}
+
+
+// TODO implement
+template <class FieldType>
+bool LinearParty<FieldType>::
+generateTuplesPE(vector< vector<FieldType> >& a,
+                 vector< vector<FieldType> >& b,
+                 vector<FieldType> c, vector<int>& elimIds){
+
+  // -- invoke TripleShareRandomPE. three times as before
+  // ---- if fails, just return elimIds.
+
+  // -- invode ReconsPE. as before
+  // ---- if fails, just return elimIds.
+
+  // -- also remember to record all info needed for check-4-consistency
+  cout << "generateTuplesPE not implemented yet"  << endl;
+  assert(false);
+  return true;
 }
 
 
@@ -1005,12 +1036,14 @@ generateTuples(vector< vector<FieldType> >& a,
 // -- all party computes (n-1)-share e_np := y_t + b_np
 // -- all parties send shares of d and e to king
 // -- king sends back reconstructed d and e
+// -- record d and e distributed by kingId
 // -- all parties compute z_t := d*e - d*b_t - e*a_t + c_t
 template <class FieldType>
 FieldType LinearParty<FieldType>::
 evalMultGate(int kingId, FieldType &xShare, FieldType &yShare,
              FieldType &aShareT, FieldType &aShareNp,
-             FieldType &bShareT, FieldType &bShareNp, FieldType &cShareT) {
+             FieldType &bShareT, FieldType &bShareNp,
+             FieldType &cShareT, FieldType &d, FieldType &e ) {
 
   // -- all party computes (n-1)-share d_np := x_t + a_np
   // -- all party computes (n-1)-share e_np := y_t + b_np
@@ -1036,6 +1069,9 @@ evalMultGate(int kingId, FieldType &xShare, FieldType &yShare,
   }
   
   spreadElms(reconsDE, 2, kingId);
+  // -- record d and e distributed by kingId
+  d = reconsDE[0];
+  e = reconsDE[1];
 
   // -- all parties compute z_t := d*e - d*b_t - e*a_t + c_t
   FieldType zShare = reconsDE[0] * reconsDE[1] -
@@ -1071,9 +1107,20 @@ faultDetection(bool happiness) {
 template <class FieldType>
 void LinearParty<FieldType>::
 faultLocalizeConsistency(vector<int>& elimIds){
+  cout << "fault localization for checking consistency not implemented yet"  << endl;
+  assert(false);
   return;
 }
 
+
+// TODO implement
+template <class FieldType>
+void LinearParty<FieldType>::
+faultLocalizeEvalSeg(vector<int>& elimIds){
+  cout << "fault localization for eval seg not implemented yet"  << endl;
+  assert(false);
+  return;
+}
 
 // checks values spread by kingId are consistent
 template <class FieldType>
@@ -1188,22 +1235,32 @@ extractNShare(vector<FieldType>& rShareT1,
   return;
 }
 
-
-
+template <class FieldType>
+void LinearParty<FieldType>::
+eliminateParties(const vector<int> &elimIds) {
+  for (auto id : elimIds) {
+    _activeMask[id] = false;
+    _nActiveParties -= 1;
+    _baParty.setPartyInactive(id);
+    _eccAlpha.setPartyInactive(id);
+    _eccBeta.setPartyInactive(id);
+  }
+  return;
+}
 
 // generate _bigT random 4-consistent tuples or return false
 // Called QuadrupleShareRandom in the new paper
 template <class FieldType>
 bool LinearParty<FieldType>::
-generate4Tuples(vector<vector<FieldType>> &rTuple) {
+generate4Tuples(vector<vector<FieldType>> &rTuples) {
   bool happiness = true;
   int nPartiesInc = _parties.size() +1;
   FieldType r = _field->Random();
-  rTuple.resize(4);
+  rTuples.resize(4);
 
   // generate the 0_r_t share
   FieldType r0;
-  happiness &= singleShareSecrete(r, _smallT, rTuple[0], r0);
+  happiness &= singleShareSecrete(r, _smallT, rTuples[0], r0);
 
   // -- locally generate the 1_r_t, 2_r_t, 3_r_t shares
   vector<FieldType> f;
@@ -1253,9 +1310,121 @@ generate4Tuples(vector<vector<FieldType>> &rTuple) {
   }
 
   // output the first T as results
-  firstNActiveValues(_bigT, _activeMask, transSharesT[0], rTuple[1]);
-  firstNActiveValues(_bigT, _activeMask, transSharesT[1], rTuple[2]);
-  firstNActiveValues(_bigT, _activeMask, transSharesT[2], rTuple[3]);
+  firstNActiveValues(_bigT, _activeMask, transSharesT[0], rTuples[1]);
+  firstNActiveValues(_bigT, _activeMask, transSharesT[1], rTuples[2]);
+  firstNActiveValues(_bigT, _activeMask, transSharesT[2], rTuples[3]);
+
+  return happiness;
+}
+
+
+// TODO: implement
+template <class FieldType>
+bool LinearParty<FieldType>::
+check4Consistency() {
+  cout << "check4consistency not implemented yet"  << endl;
+  assert(false);
+  return true;
+}
+
+template <class FieldType>
+bool LinearParty<FieldType>::
+evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
+  bool happiness = true;
+
+  // -- generate enough multiplication tuples for current segment
+  int multOffset = 0;
+  vector< vector<FieldType> > a;
+  vector< vector<FieldType> > b;
+  vector< FieldType > c;
+  // TODO, change to generateTuplesPE when implemented
+  // and remove the assert().
+  happiness &= generateTuples(a, b, c);
+  assert(happiness);
+  // if (!happiness) {
+  //   return false;
+  // }
+
+  // -- For each addition gate: just add the two shares
+  // -- For each mult gate: use a multiplication tuple (using lowest active id)
+  // ---- Need to record the distribued d, and e values by kingId!
+  // ---- Need to record the used xShare and yShare by mult gates!
+  int kingId = 0;
+  while(!_activeMask[kingId]){kingId++;}
+  vector<FieldType> kingDs(_bigT);
+  vector<FieldType> kingEs(_bigT);
+  vector<FieldType> xShares(_bigT);
+  vector<FieldType> yShares(_bigT);
+  
+  for (auto gate : circuitSeg) {
+    FieldType xShare = _wireShares[gate.input1];
+    FieldType yShare = _wireShares[gate.input2];
+    switch (gate.gateType) {
+    case ADD :
+      _wireShares[gate.output] = xShare + yShare;
+      break;
+    case SUB :
+      _wireShares[gate.output] = xShare - yShare;
+      break;      
+    case MULT :
+      xShares[multOffset] = xShare;
+      yShares[multOffset] = yShare;
+      _wireShares[gate.output] =
+        evalMultGate(kingId, xShare, yShare,
+                     a[0][multOffset], a[1][multOffset],
+                     b[0][multOffset], b[1][multOffset], c[multOffset],
+                     kingDs[multOffset], kingEs[multOffset]);
+      multOffset++;
+      break;
+    case SCALAR :
+    case SCALAR_ADD :
+    default :
+      cout << "Gate type Not Implemented." << endl;
+      assert(false);
+      break;
+    }
+  }
+  // assert(multOffset == _bigT);
+
+  // -- check the consistency of kingId
+  happiness &= checkConsistency(kingId, kingDs, elimIds);
+  if (!happiness) {
+    return false;
+  }
+  happiness &= checkConsistency(kingId, kingEs, elimIds);
+  if (!happiness) {
+    return false;
+  }
+
+  // -- recompute all reconstructions (using recorded xShares and yShares)
+  vector<FieldType> dShares(_bigT);
+  vector<FieldType> eShares(_bigT);
+  for (int i = 0; i < _bigT; i++) {
+    dShares[i] = xShares[i] + a[0][i];
+    eShares[i] = yShares[i] + b[0][i];
+  }
+
+  // -- if all check passes, return true.
+  // -- otherwise, run faultLocalizationEvalSeg(). (= step 6 - 8 in paper)
+  // -- TODO: maybe change here after implementing fault localization
+  vector<FieldType> reconsDs(_bigT);
+  happiness &= reconstructPublic(dShares, reconsDs, _smallT);
+  // assert(happiness); // ^^  this is robust
+  for (int i = 0; i < _bigT; i++) {
+    if (reconsDs[i] != kingDs[i]) {
+      faultLocalizeConsistency(elimIds);
+      return false;
+    }
+  }
+  vector<FieldType> reconsEs(_bigT);
+  happiness &= reconstructPublic(eShares, reconsEs, _smallT);
+  // assert(happiness); // ^^  this is robust
+  for (int i = 0; i < _bigT; i++) {
+    if (reconsEs[i] != kingEs[i]) {
+      faultLocalizeConsistency(elimIds);
+      return false;
+    }
+  }
 
   return happiness;
 }
@@ -1370,12 +1539,12 @@ linearInput(vector< vector<FieldType> >& recvInputs,
 }
 
 // runs linearInput() repeatedly until all inputs are shared.
-// -- TODO currently reconstructPublic all inputs after sharing
+// TODO: also plug in random shares for random gate
 template <class FieldType>
 void LinearParty<FieldType>::
 InputPhase(){
 
-  _wireValues.resize( _circuit.getNrOfGates() );
+  _wireShares.resize( _circuit.getNrOfGates() );
   int nPartiesInc = _parties.size() + 1;
   
   // batch share inputs until all inputs are shared
@@ -1392,36 +1561,36 @@ InputPhase(){
 
   cout << "-------- finished input sharing" << endl;
 
-  // batch reconstruct inputs until all inputs are reconstructed
-  vector< vector<FieldType> > receivedInputsClear(nPartiesInc);
-  vector<FieldType> reconsShares;
-  vector<FieldType> reconsResults;
-  for (int i = 0; i < nPartiesInc; i++) {
-    int nInputs = receivedInputShares[i].size();
-    receivedInputsClear[i].resize( nInputs );
-    if (nInputs == 0) {
-      continue;
-    }
+  // // batch reconstruct inputs until all inputs are reconstructed
+  // vector< vector<FieldType> > receivedInputsClear(nPartiesInc);
+  // vector<FieldType> reconsShares;
+  // vector<FieldType> reconsResults;
+  // for (int i = 0; i < nPartiesInc; i++) {
+  //   int nInputs = receivedInputShares[i].size();
+  //   receivedInputsClear[i].resize( nInputs );
+  //   if (nInputs == 0) {
+  //     continue;
+  //   }
 
-    for (int j = 0; j < nInputs; j += _bigT) {
-      int nShares = (nInputs - j) < _bigT ? (nInputs - j) : _bigT;
+  //   for (int j = 0; j < nInputs; j += _bigT) {
+  //     int nShares = (nInputs - j) < _bigT ? (nInputs - j) : _bigT;
             
-      reconsShares.resize(nShares);
-      for (int k = 0; k < nShares; k++) {
-        reconsShares[k] = receivedInputShares[i][j+k];
-      }
+  //     reconsShares.resize(nShares);
+  //     for (int k = 0; k < nShares; k++) {
+  //       reconsShares[k] = receivedInputShares[i][j+k];
+  //     }
 
-      reconstructPublic(reconsShares, reconsResults, _smallT);
+  //     reconstructPublic(reconsShares, reconsResults, _smallT);
       
-      for (int k = 0; k < nShares; k++) {
-        receivedInputsClear[i][j+k] = reconsResults[k];
-      }
-    }
-  }
+  //     for (int k = 0; k < nShares; k++) {
+  //       receivedInputsClear[i][j+k] = reconsResults[k];
+  //     }
+  //   }
+  // }
 
-  cout << "-------- finished input reconstruction" << endl;
+  // cout << "-------- finished input reconstruction" << endl;
 
-  // plug in (reconstructed) clear input values
+  // plug in shares of  input values
   int nInputGates = _circuit.getNrOfInputGates();
   const vector<TGate> gates = _circuit.getGates();
   vector<int> offsets(nPartiesInc);
@@ -1431,7 +1600,7 @@ InputPhase(){
     if (gates[i].gateType == INPUT) {
       int curParty = gates[i].party;
       int curOffset = offsets[ curParty ]++;
-      _wireValues[ gates[i].output ] = receivedInputsClear[curParty][curOffset];
+      _wireShares[ gates[i].output ] = receivedInputShares[curParty][curOffset];
       i++;
     }
   }
@@ -1439,36 +1608,47 @@ InputPhase(){
   return;
 }
 
+
 // evaluate circuits
-// -- TODO: currently just a stub: compute gates in clear
+// -- repeatedly run evalSeg until all segments are done.
+// -- eliminate players if evalSeg fails, and re-do.
 template <class FieldType>
 void LinearParty<FieldType>::
 EvalPhase(){  
   const vector<TGate> gates = _circuit.getGates();
-  for (auto g : gates) {
-    switch (g.gateType) {
-    case ADD :
-    case SCALAR_ADD :
-      _wireValues[g.output] = _wireValues[g.input1] + _wireValues[g.input2];
-      break;
-    case SCALAR :
-    case MULT :
-      _wireValues[g.output] = _wireValues[g.input1] * _wireValues[g.input2];
-      break;
-    case SUB :
-      _wireValues[g.output] = _wireValues[g.input1] - _wireValues[g.input2];
-      break;
-    default :
-      break;
+  // TODO: should also subtract random gates here?
+  int nGatesLeft = _circuit.getNrOfGates() -
+    _circuit.getNrOfInputGates() - _circuit.getNrOfOutputGates();
+  int gateIdx = 0;
+  int nMults = 0;
+  
+  vector<TGate> seg;
+  while (nGatesLeft > 0) {
+    // build a segment
+    seg.clear();
+    nMults = 0;
+    while (nMults < _bigT) {
+      auto g = gates[gateIdx++];
+      if (g.gateType != INPUT && g.gateType != OUTPUT) {
+        seg.push_back( g );
+        nMults += (g.gateType == MULT);
+      }
+    }
+
+    // evaluate a segment (repeatedly until success)
+    vector<int> elimIds; // the first time, just eliminate nothing.
+    bool success = false;
+    while (!success) {
+      eliminateParties(elimIds);
+      success = evalSeg(seg, elimIds);
     }
   }
-
+  
   cout << "---- finished Eval Phase ----" << endl;
 }
 
 
 // reconstruct outputs
-// -- TODO: reconstruct from shares.
 template <class FieldType>
 void LinearParty<FieldType>::
 OutputPhase(){
@@ -1479,24 +1659,19 @@ OutputPhase(){
        << " output gates" << endl;
 
   for (auto g : gates) {
-    if ((g.output == 8002 ||
-         g.output == 8001 ||
-         g.output == 5598 ||
-         g.output == 5599 ||
-         g.output == 7199 ||
-         g.output == 7200)
-        && _myId == 0) {
-      cout << _myId << " : wire " << g.output
-           << " is " << _wireValues[ g.output ] << endl;
-      
-    }
-
-    if (g.gateType == OUTPUT && g.party == _myId) {
-      cout << _myId << " : output " << g.input1
-           << " is " << _wireValues[ g.input1 ] << endl;
+    if (g.gateType == OUTPUT) {
+      // for each output gate, consume a zero-t-share
+      int rootId = g.party;
+      FieldType outputShare = _wireShares[g.output];
+      outputShare += _singleZeroShares[_singleZeroSharesOffset++];
+      FieldType output = reconstructPrivate(outputShare, _smallT, rootId);
+      if (rootId == _myId) {
+        cout << _myId << " : wire" << g.output << " is "
+             << output << endl;
+      }
     }
   }
-
+  
   cout << "---- finished Output Phase ----" << endl;
   return;
 }

@@ -96,6 +96,7 @@ public:
   void setAlphaBeta(vector<FieldType>& alpha, vector<FieldType>& beta);
   void setNumThreads(int numThreads);
   void getRemainingParties(vector< shared_ptr<ProtocolPartyData> >& parties);
+  void setPartyInactive(int id);
 
 
   // -------- public functionalities --------
@@ -174,6 +175,7 @@ setNumThreads(int numThreads){
   return;
 }
 
+
 template <class FieldType>
 void BAParty<FieldType>::
 getRemainingParties(vector< shared_ptr<ProtocolPartyData> >& parties){
@@ -187,6 +189,21 @@ getRemainingParties(vector< shared_ptr<ProtocolPartyData> >& parties){
   }
   activeParties.resize(nActive);
   parties = activeParties;
+  return;
+}
+
+
+template <class FieldType>
+void BAParty<FieldType>::
+setPartyInactive(int id){
+  assert(id != _myId);
+  int nParties = _partySocket.size();
+  for (int i = 0; i < nParties; i++) {
+    if (_partySocket[i]->getID() == id) {
+      _activeMask[i] = false;
+      return;
+    }
+  }
   return;
 }
 
