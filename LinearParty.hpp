@@ -26,13 +26,11 @@ using namespace std;
 using namespace std::chrono;
 
 // Plan: adapt & test existing code by George bit by bit.
-// - 4 consistency functionality
 // - fault localization
 // - player elimination
 // - performance testing
 // - (trivial) malicious party
 // - optimizations
-//
 
 // TODO:
 // 1 check that all inactive elements are 0.
@@ -71,18 +69,21 @@ private:
   vector< shared_ptr<ProtocolPartyData> > _parties;
   // _activeMask[ partyId ] == 1 if partyId is active.
   vector<bool> _activeMask;
+  // has size 3. each of size at most _smallT + 1
+  vector< vector<int> > _partition;
 
   vector<int> _inputSizes;
   vector<long> _output;
 
+  // the following are generated at the offline phase
   int _inputOffset = 0;
   vector<FieldType> _input;
+  
   int _singleRandomSharesOffset = 0;
   vector<FieldType> _singleRandomShares;
+
   int _singleZeroSharesOffset = 0;
   vector<FieldType> _singleZeroShares;
-  int _tripleRandomSharesOffset = 0;
-  vector< vector<FieldType> >_tripleRandomShares;
 
 
   // ======== private functionalities ========
@@ -95,10 +96,31 @@ private:
   void decodeFieldElts(vector<byte>& input, vector<FieldType>& output);
   void decodeFieldElt(vector<byte>& input, FieldType& output);
   void readInputFromFile(string fileName);
-  void randomSecretePoly(FieldType& s, int degree,
+  // generate a random degree d polynomial with p(0) = s
+  void randomSecretePoly(FieldType& s, int d,
                          vector<FieldType>& polynomial);
+  
+  void expandNShareForPartition(int partitionIdx,
+                                vector<FieldType>& rShareNp,
+                                vector<FieldType>& rShareT);
+  // expand a whole (n'-1)-share into 3 r-shares
+  void expandNShare(vector<FieldType>& rShareNp, // input. a (n'-1) share
+                    vector<FieldType>& rShareT1, // output, a t-share
+                    vector<FieldType>& rShareT2, // output, a t-share
+                    vector<FieldType>& rShareT3); // output, a t-share
+  void extractNShare(vector<FieldType>& rShareT1, // input, a t-share
+                     vector<FieldType>& rShareT2, // input, a t-share
+                     vector<FieldType>& rShareT3, // input, a t-share
+                     vector<FieldType>& rShareNp); // output, a (n'-1)-share
+  
+  // check if points lie on a degree d polynomial
+  bool checkPolynomial(vector<FieldType>& y, int d, vector<FieldType>& g);
+  
 
   // ---- helper round functions ----
+  void spreadElms(vector<FieldType>& buffer,
+                 int nElements, int rootId);
+
   void scatterForDealers(vector<FieldType>& sendElms,
                          vector<FieldType>& recvElms,
                          vector<int>& dealerIds);
@@ -113,6 +135,7 @@ private:
   void makeParties();
   void makeAlpha();
   void makeBeta();
+  void makePartition();
 
   // ---- Batch broadcasting (BTH08 Appendix) ----
   // expand polynomial to n evaluations. 
@@ -148,13 +171,21 @@ private:
 
 
   // ---- creating multiplicative tuples ----
+  // generate _bigT random multiplicative tuples or return false
   bool generateTuples(vector< vector<FieldType> >& a,
                       vector< vector<FieldType> >& b,
                       vector<FieldType> c);
   
+  // ---- fault localization for different subprotocols ----
+  // fault localization for checkConsistency()
+  void faultLocalizeConsistency(vector<int>& elimIds);
+  
+
   // ---- main subprotocols ----
   
-  // runs linearInput
+  // From new paper F_input() and F_rand()
+  // -- runs linearInput() until all inputs are shared
+  // -- just plug in random t-shares from offline phase input random gates
   void InputPhase();
   // From BTH08 Appendix: batch input sharing (K dealers each T inputs)
   // batch share nInputs # of input.
@@ -165,7 +196,22 @@ private:
 
   // From new paper =eval()=
   void EvalPhase();
+  // computes a mult gate, consuming a multiplicative tuple
+  FieldType evalMultGate(int kingId, FieldType& xShare, FieldType& yShare,
+                         FieldType& aShareT, FieldType& aShareNp,
+                         FieldType& bShareT, FieldType& bShareNp,
+                         FieldType& cShareT);
+  bool faultDetection(bool happiness);
+  bool checkConsistency(int kingId, vector<FieldType>& vals,
+                        vector<int>& elimIds);
+  // generate _bigT random 4-consistent tuples or return false
+  // Called QuadrupleShareRandom in the new paper
+  bool generate4Tuples(vector< vector<FieldType> >& rTuple);
+
+
   // From new paper =output()=
+  // -- run singleShareZero() for each batch of (_bigT) output gates.
+  // -- and then reconstruct output share to the owner
   void OutputPhase();
   
 public:
@@ -181,8 +227,6 @@ public:
   void runOnline() override;
 
   // ======== testing functionalities ========
-  void broadcastElements(vector<FieldType>& buffer,
-                         int nElements, int rootId);
 
   vector<FieldType> _wireValues;
     
@@ -204,6 +248,68 @@ fillInputSizes(int myId, int nParties, ArithmeticCircuit& circuit, // input
     }
   }
   
+  return;
+}
+
+static inline void 
+lastNActiveParties(int lastN, const vector<bool>& mask,
+                   vector<int>& activeIds) {
+  int nPartiesInc = mask.size();
+  int lastId = nPartiesInc-1;
+  activeIds.resize(lastN);
+  while (lastN > 0 && lastId >= 0) {
+    if (mask[lastId]) {
+      activeIds[lastN-1] = lastId;
+      lastN--;
+    }
+    lastId--;
+  }
+  return;
+}
+
+static inline void
+firstNActiveParties(int firstN, const vector<bool>& mask,
+                    vector<int>& activeIds) {
+  int firstId = 0;
+  int idx = 0;
+  activeIds.resize(firstN);
+  while (idx < firstN) {
+    if (mask[firstId]) {
+      activeIds[idx] = firstId;
+      idx++;
+    }
+    firstId++;
+  }
+  return;
+}
+
+template <class FieldType>
+static inline void
+firstNActiveValues(int firstN, const vector<bool> &mask,
+                   vector<FieldType> &totalValues,
+                   vector<FieldType> &activeValues) {
+  
+  vector<int> activeIds;
+  firstNActiveParties(firstN, mask, activeIds);
+  activeValues.resize(firstN);
+  for (int i = 0; i < firstN; i++) {
+    activeValues[i] = totalValues[ activeIds[i] ];
+  }
+  return;
+}
+
+template <class FieldType>
+static inline void
+lastNActiveValues(int lastN, const vector<bool> &mask,
+                  vector<FieldType> &totalValues,
+                  vector<FieldType> &activeValues) {
+  
+  vector<int> activeIds;
+  lastNActiveParties(lastN, mask, activeIds);
+  activeValues.resize(lastN);
+  for (int i = 0; i < lastN; i++) {
+    activeValues[i] = totalValues[ activeIds[i] ];
+  }
   return;
 }
 
@@ -264,6 +370,30 @@ makeBeta(){
   return;
 }
 
+template<class FieldType>
+void LinearParty<FieldType>::
+makePartition(){
+  // divide all party ids into 3 partitions, each of size
+  // at most _smallT + 1;
+  _partition.resize(3);
+  int curId = 0;
+  int maxSize = _smallT + 1;
+  int partiesLeft =  _parties.size() + 1;
+  int curPartitionSize = 0;
+
+  // just assign partitions in id order.
+  for (int j = 0; j < 3; j++) {
+    partiesLeft -= curPartitionSize;
+    curPartitionSize = maxSize <= partiesLeft ? maxSize : partiesLeft;
+    _partition[j].resize(curPartitionSize);
+    for (int i = 0; i < curPartitionSize; i++) {
+      _partition[j][i] = curId++;
+    }
+  }
+
+  return;
+}
+
 template <class FieldType>
 LinearParty<FieldType>::
 LinearParty(int argc, char* argv[])
@@ -280,6 +410,7 @@ LinearParty(int argc, char* argv[])
   makeParties();
   makeAlpha();
   makeBeta();
+  makePartition();
 
   // initialize subprotocol classes
   _M.allocate(_nActiveParties, _nActiveParties, _field);
@@ -389,12 +520,12 @@ readInputFromFile(string fileName){
 }
 
 
-// broadcast from a root to all
+// spread from a root to all
 // a specified number of field elements
 template <class FieldType>
 void LinearParty<FieldType>::
-broadcastElements(vector<FieldType>& buffer,
-                  int nElements, int rootId){
+spreadElms(vector<FieldType>& buffer,
+           int nElements, int rootId){
 
   vector<byte> msg;
   int nParties = _parties.size();
@@ -404,10 +535,10 @@ broadcastElements(vector<FieldType>& buffer,
     // I'm the sender
     encodeFieldElts(buffer, msg);
     msg.resize(msgSize);
-    _baParty.broadcastMsg(msg, msgSize, rootId);
+    _baParty.spreadMsg(msg, msgSize, rootId);
   } else {
     // I'm a receiver
-    _baParty.broadcastMsg(msg, msgSize, rootId);
+    _baParty.spreadMsg(msg, msgSize, rootId);
     decodeFieldElts(msg, buffer);
   }
   return;
@@ -587,37 +718,29 @@ scatterForAll(vector<FieldType>& sendElms,
   return;
 }
 
-static inline void 
-lastNActiveParties(int lastN, const vector<bool>& mask,
-                   vector<int>& activeIds) {
-  int nPartiesInc = mask.size();
-  int lastId = nPartiesInc-1;
-  activeIds.resize(lastN);
-  while (lastN > 0 && lastId >= 0) {
-    if (mask[lastId]) {
-      activeIds[lastN-1] = lastId;
-      lastN--;
-    }
-    lastId--;
-  }
-  return;
-}
+template <class FieldType>
+bool LinearParty<FieldType>::
+checkPolynomial(vector<FieldType>& y, int degree, vector<FieldType>& g) {
 
-static inline void
-firstNActiveParties(int firstN, const vector<bool>& mask,
-                    vector<int>& activeIds) {
-  int nPartiesInc = mask.size();
-  int firstId = 0;
-  int idx = 0;
-  activeIds.resize(firstN);
-  while (idx < firstN) {
-    if (mask[firstId]) {
-      activeIds[idx] = firstId;
-      idx++;
+  bool happiness = true;
+  int nPoints = y.size();
+  // assert(y.size() == _parties().size()+1)
+  g.clear();
+  vector<FieldType> xTmp(degree+1);
+  vector<FieldType> yTmp(degree+1);
+
+  firstNActiveValues(degree+1, _activeMask, _alpha, xTmp);
+  firstNActiveValues(degree+1, _activeMask, y, yTmp);
+  _eccAlpha.interpolate(xTmp, yTmp, g);
+  // check the rest
+  for (int i = 0; i < nPoints; i++) {
+    if (_activeMask[i]) {
+      happiness &=
+        (_eccAlpha.evalPolynomial(_alpha[i], g) == y[i]);
     }
-    firstId++;
   }
-  return;
+  
+  return happiness;
 }
 
 
@@ -658,32 +781,25 @@ singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
   vector<int> dealers(nVerifiers);
   lastNActiveParties(nVerifiers, _activeMask, dealers);
   vector<FieldType> verifyShares(nVerifiers);
-  vector<FieldType> toVerifyShares;
-  for (int i = 0; i < nVerifiers; i++) {
-    verifyShares[i] = transformedShares[ dealers[i] ];
-  }
+  lastNActiveValues(nVerifiers, _activeMask, transformedShares, verifyShares);
+  vector<FieldType> toVerifyShares; // received if I'm a verifier
   gatherForDealers(verifyShares, toVerifyShares, dealers);
 
   // -- the (n'-T) verifiers verify (n'-T) received shares
   checkVal = *(_field->GetZero()); // default value
   if (toVerifyShares.size() > 0) {
     vector<FieldType> g;
-    happiness &= _eccAlpha.reconstruct(toVerifyShares, d, g);
+    happiness &= checkPolynomial(toVerifyShares, d, g);
+    
+    // compute the checkVal
     if (happiness) {
       checkVal = _eccAlpha.evalPolynomial(*(_field->GetZero()), g);
     }
   }
 
   // -- output the first _bigT shares from active parties
-  shares.resize(_bigT);
-  vector<int> activeSharers(_bigT);
-  firstNActiveParties(_bigT, _activeMask, activeSharers);
-  for (int i = 0; i < _bigT; i++) {
-    shares[i] = transformedShares[ activeSharers[i] ];
-  }
-
+  firstNActiveValues(_bigT, _activeMask, transformedShares, shares);
   return happiness;
-  
 }
 
 // choose a random secrete, and run singleShareSecrete
@@ -766,6 +882,8 @@ reconstructPrivate(FieldType& share, int degree, int root){
 
     vector<FieldType> polynomial;
     bool success = _eccAlpha.reconstruct(shares, degree, polynomial);
+
+    // debug TODO: remove
     if (!success) {
       cout << "degree is " <<  degree << endl;
       for (auto e : shares) {
@@ -881,6 +999,266 @@ generateTuples(vector< vector<FieldType> >& a,
   return happiness;
 }
 
+
+// computes a mult gate, consuming a multiplicative tuple
+// -- all party computes (n-1)-share d_np := x_t + a_np
+// -- all party computes (n-1)-share e_np := y_t + b_np
+// -- all parties send shares of d and e to king
+// -- king sends back reconstructed d and e
+// -- all parties compute z_t := d*e - d*b_t - e*a_t + c_t
+template <class FieldType>
+FieldType LinearParty<FieldType>::
+evalMultGate(int kingId, FieldType &xShare, FieldType &yShare,
+             FieldType &aShareT, FieldType &aShareNp,
+             FieldType &bShareT, FieldType &bShareNp, FieldType &cShareT) {
+
+  // -- all party computes (n-1)-share d_np := x_t + a_np
+  // -- all party computes (n-1)-share e_np := y_t + b_np
+  FieldType dShareNp = xShare + aShareNp;
+  FieldType eShareNp = yShare + bShareNp;
+
+  // -- all parties send shares of d and e to king
+  // -- king sends back reconstructed d and e
+  vector<int> dealer{kingId};
+  vector<FieldType> sendElm(1);
+  vector<FieldType> recvElms;
+  vector<FieldType> reconsDE(2); // [0] is d, and [1] is e
+
+  sendElm[0] = dShareNp;
+  gatherForDealers(sendElm, recvElms, dealer);
+  if (kingId == _myId) {
+    reconsDE[0] = _eccAlpha.evalPolynomial(*(_field->GetZero()), recvElms);
+  }
+  sendElm[0] = eShareNp;
+  gatherForDealers(sendElm, recvElms, dealer);
+  if (kingId == _myId) {
+    reconsDE[1] = _eccAlpha.evalPolynomial(*(_field->GetZero()), recvElms);
+  }
+  
+  spreadElms(reconsDE, 2, kingId);
+
+  // -- all parties compute z_t := d*e - d*b_t - e*a_t + c_t
+  FieldType zShare = reconsDE[0] * reconsDE[1] -
+    reconsDE[0] * bShareT - reconsDE[1] * aShareT + cShareT;
+  return zShare;
+}
+
+// detect that any party is unhappy
+// -- each party sends happiness to all others
+// -- set to unhappy if sees any unhappy
+// -- all parties run consensus on happiness
+template <class FieldType>
+bool LinearParty<FieldType>::
+faultDetection(bool happiness) {
+  int nParties = _parties.size();
+  // in-active parties's bit is set to true
+  vector<bool> recvBits(nParties, true);
+
+  // -- each party sends happiness to all others
+  // -- set to unhappy if sees any unhappy
+  _baParty.exchangeBit(happiness, recvBits);
+  for (auto b : recvBits) {
+    happiness &= b;
+  }
+
+  // -- all parties run consensus on happiness
+  happiness =_baParty.consensus(happiness);
+  return happiness;
+}
+
+
+// TODO: implement
+template <class FieldType>
+void LinearParty<FieldType>::
+faultLocalizeConsistency(vector<int>& elimIds){
+  return;
+}
+
+
+// checks values spread by kingId are consistent
+template <class FieldType>
+bool LinearParty<FieldType>::
+checkConsistency(int kingId, vector<FieldType> &vals,
+                 vector<int>& elimIds) {
+  bool happiness = true;
+  int smallTp = (_nActiveParties - _bigT) / 2;
+  int nPartiesInc = _parties.size();
+  int nVerifiers = _bigT + smallTp;
+
+  // computational phase
+  // -- all parties compute r^1 ... r^{T+t'} using HIM
+  vector<FieldType> paddedVals = vals;
+  paddedVals.resize(nPartiesInc, *(_field->GetZero()));
+  vector<FieldType> expandedShares(nPartiesInc);
+  _M.MatrixMult(paddedVals, expandedShares);
+  expandedShares.resize(nVerifiers);
+  
+  // -- all parties send their values to corresponding dealer 
+  vector<int> dealers;
+  firstNActiveParties(nVerifiers, _activeMask, dealers);
+  vector<FieldType> recvElms;
+  gatherForDealers(expandedShares, recvElms, dealers);
+  if (recvElms.size() > 0) {
+    // I'm a verifier
+    for (int i = 0; i < nPartiesInc - 1; i++) {
+      happiness &= ( recvElms[i] == recvElms[i+1] );
+    }
+  }
+
+  // fault detection phase
+  bool success = faultDetection(happiness);
+
+  if (!success) {
+    faultLocalizeConsistency(elimIds);
+  }
+
+  return success;
+}
+
+
+template <class FieldType>
+void LinearParty<FieldType>::
+expandNShareForPartition(int partitionIdx,
+                         vector<FieldType>& rShareNp,
+                         vector<FieldType>& rShareT){
+  int nPartiesInc = _parties.size() + 1;
+  vector<FieldType> fTmp;
+  vector<FieldType> alphaTmp(_smallT + 1);
+  vector<FieldType> valTmp(_smallT + 1);
+
+  int curInterpSize = _partition[ partitionIdx ].size();
+  for (int i=0; i<curInterpSize; i++) {
+    int id = _partition[0][i];
+    alphaTmp[i] = _alpha[id];
+    valTmp[i] = (_activeMask[id]) ? rShareNp[id] : _field->Random();
+  }
+  while (curInterpSize < _smallT + 1) {
+    alphaTmp[ curInterpSize ] = // just an arbitrary value
+      _field->GetElement( nPartiesInc + curInterpSize );
+    valTmp[ curInterpSize ] = _field->Random();
+    curInterpSize++;
+  }
+  _eccAlpha.interpolate(alphaTmp, valTmp, fTmp);
+  rShareT.resize(nPartiesInc);
+  for (int i = 0; i < nPartiesInc; i++) {
+    rShareT[i] = _eccAlpha.evalPolynomial(_alpha[i], fTmp);
+  }
+  
+  return;
+}
+
+
+// expand a whole (n'-1)-share into 3 r-shares
+template <class FieldType>
+void LinearParty<FieldType>::
+expandNShare(vector<FieldType>& rShareNp,
+             vector<FieldType>& rShareT1,
+             vector<FieldType>& rShareT2,
+             vector<FieldType>& rShareT3){
+
+  expandNShareForPartition(0, rShareNp, rShareT1);
+  expandNShareForPartition(1, rShareNp, rShareT2);
+  expandNShareForPartition(2, rShareNp, rShareT3);
+  
+  return;
+}
+
+template <class FieldType>
+void LinearParty<FieldType>::
+extractNShare(vector<FieldType>& rShareT1,
+              vector<FieldType>& rShareT2,
+              vector<FieldType>& rShareT3,
+              vector<FieldType>& rShareNp){
+
+  int nPartiesInc = _parties.size() +1;
+  rShareNp.resize();
+  
+  for (auto id : _partition[0]) {
+    rShareNp[ id ] = rShareT1[id];
+  }
+
+  for (auto id : _partition[1]) {
+    rShareNp[ id ] = rShareT2[id];
+  }
+  
+  for (auto id : _partition[2]) {
+    rShareNp[ id ] = rShareT3[id];
+  }
+
+  return;
+}
+
+
+
+
+// generate _bigT random 4-consistent tuples or return false
+// Called QuadrupleShareRandom in the new paper
+template <class FieldType>
+bool LinearParty<FieldType>::
+generate4Tuples(vector<vector<FieldType>> &rTuple) {
+  bool happiness = true;
+  int nPartiesInc = _parties.size() +1;
+  FieldType r = _field->Random();
+  rTuple.resize(4);
+
+  // generate the 0_r_t share
+  FieldType r0;
+  happiness &= singleShareSecrete(r, _smallT, rTuple[0], r0);
+
+  // -- locally generate the 1_r_t, 2_r_t, 3_r_t shares
+  vector<FieldType> f;
+  vector<FieldType> fVals(nPartiesInc);
+  randomSecretePoly(r, _nActiveParties-1, f);
+  for (int i = 0; i < nPartiesInc; i++) {
+    fVals[i] = _eccAlpha.evalPolynomial(_alpha[i], fVals);
+  }
+  vector<FieldType> fValsT1, fValsT2, fValsT3;
+  expandNShare(fVals, fValsT1, fValsT2, fValsT3);
+
+  // -- share the 3 expanded vectors to all
+  // -- apply HIM to received shares
+  vector<FieldType> recvSharesT(nPartiesInc);
+  vector< vector<FieldType> > transSharesT(3, vector<FieldType>(nPartiesInc));
+  scatterForAll(fValsT1, recvSharesT);
+  _M.MatrixMult(recvSharesT, transSharesT[0]);
+  scatterForAll(fValsT2, recvSharesT);
+  _M.MatrixMult(recvSharesT, transSharesT[1]);
+  scatterForAll(fValsT3, recvSharesT);
+  _M.MatrixMult(recvSharesT, transSharesT[2]);
+
+  // -- every party send transformedShares of T+1 ... n' to
+  // -- the corresponding parties
+  int nVerifiers = _nActiveParties - _bigT;
+  vector<int> dealers(nVerifiers);
+  lastNActiveParties(nVerifiers, _activeMask, dealers);
+  vector<FieldType> verifySharesT(nPartiesInc);
+  vector< vector<FieldType> > toVerifySharesT(3);
+  for (int i = 0; i < 3; i++) {
+    lastNActiveValues(nVerifiers, _activeMask, transSharesT[0], verifySharesT);
+    gatherForDealers(verifySharesT, toVerifySharesT[i], dealers);
+  }
+
+  if (toVerifySharesT[0].size() > 0) { // I'm a verifyer
+    vector<FieldType> g;
+    happiness &= checkPolynomial(toVerifySharesT[0], _smallT, g);
+    happiness &= checkPolynomial(toVerifySharesT[1], _smallT, g);
+    happiness &= checkPolynomial(toVerifySharesT[2], _smallT, g);
+    
+    vector<FieldType> rShareNp;
+    extractNShare(toVerifySharesT[0],
+                  toVerifySharesT[1],
+                  toVerifySharesT[2], rShareNp);
+    happiness &= checkPolynomial(rShareNp, _nActiveParties-1, g);
+    happiness &= (_eccAlpha.evalPolynomial(*(_field->GetZero()), g) == r0);
+  }
+
+  // output the first T as results
+  firstNActiveValues(_bigT, _activeMask, transSharesT[0], rTuple[1]);
+  firstNActiveValues(_bigT, _activeMask, transSharesT[1], rTuple[2]);
+  firstNActiveValues(_bigT, _activeMask, transSharesT[2], rTuple[3]);
+
+  return happiness;
+}
 
 // fill a list of partyIds with inputs.
 // also return the minimum number of input amoung them
@@ -1090,6 +1468,7 @@ EvalPhase(){
 
 
 // reconstruct outputs
+// -- TODO: reconstruct from shares.
 template <class FieldType>
 void LinearParty<FieldType>::
 OutputPhase(){
@@ -1125,14 +1504,15 @@ OutputPhase(){
 
 // runs preparation phase:
 // -- generate random shares for input and random gates
-// -- TODO: generating shares random triples
+// -- generate (random) zero shares for output gates
+// -- TODO: fault detection, localization, and re-run
 template <class FieldType>
 void LinearParty<FieldType>::
 runOffline(){
-  // -- generate random shares for input and random gates
+  // -- generate random t-shares for input and random gates
   int nSingleShares =
     _circuit.getNrOfInputGates() + _circuit.getNrOfRandomGates();
-  int nBatches = nSingleShares / _bigT;
+  int nBatches = (nSingleShares + _bigT-1) / _bigT;
 
   cout << "running singleShareRandom in "
        << nBatches << " batches" << endl;
@@ -1148,8 +1528,23 @@ runOffline(){
     }
   }
 
-  // -- generate multiplication tuples
+  // -- generate (random) zero t-shares for output gates
+  int nSingleZeroShares = _circuit.getNrOfOutputGates();
+  nBatches = (nSingleZeroShares + _bigT-1) / _bigT;
 
+  cout << "running singleShareZero in "
+       << nBatches << " batches" << endl;
+  
+  _singleZeroShares.resize(nBatches * _bigT);
+  happiness = true;
+  for (int i = 0; i < nBatches; i++) {
+    FieldType tmp;
+    happiness &= singleShareZero(_smallT, batchResult);
+    for (int j = 0; j < _bigT; j++) {
+      _singleZeroShares[ i*_bigT + j ] = batchResult[j];
+    }
+  }
+  
   cout << "---- finished offline phase ----" << endl;
   return;
 }

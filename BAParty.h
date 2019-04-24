@@ -67,9 +67,9 @@ private:
   void scatterMsgWorker(vector< vector<byte> >& sendMsgs,
                         int msgSize, int threadId, int nThread);
 
-    // used in base Phase King
-  bool spreadBit(bool sendBit, int kingId);
-  void exchangeBit(bool sendBit, vector<bool>& recvBits);
+  // used in base Phase King. (moved to public)
+  // bool spreadBit(bool sendBit, int kingId);
+  // void exchangeBit(bool sendBit, vector<bool>& recvBits);
   bool universal_rounds(bool b, int* D,
                         vector<bool>& buffer, vector<bool>& buffer2);
 
@@ -99,11 +99,15 @@ public:
 
 
   // -------- public functionalities --------
+  // convenient funtionalities for fault detection
+  bool spreadBit(bool sendBit, int kingId);
+  void exchangeBit(bool sendBit, vector<bool>& recvBits);
+  
   // from BGP92: consensus() only on a bit (happiness).
   bool consensus_base(bool b);
   bool consensus(bool b);
   // trivial from consensus(): first dealer spread bit, then run consensus().
-  void broadcastBit(bool& b, int rootId);
+  void broadcastBit(bool& b, int rootId);  
   void broadcastMsg(vector<byte>& msg, int msgSize, int rootId);
   void spreadMsg(vector<byte>& msg, int msgSize, int rootId);
   void scatterMsg(vector< vector<byte> >& sendMsgs, vector<byte>& recvMsg,
@@ -231,7 +235,8 @@ exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
 template <class FieldType>
 void BAParty<FieldType>::
 exchangeBit(bool sendBit, vector<bool>& recvBits){
-
+  recvBits.resize(_partySocket.size());
+  
   vector<thread> threads(_nThread);
   for(int i=0; i<_nThread; i++){
     threads[i] = thread(&BAParty::exchangeBitWorker, this,

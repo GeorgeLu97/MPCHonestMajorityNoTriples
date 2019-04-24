@@ -69,6 +69,8 @@ private:
                                 vector<FieldType>& a2, // output
                                 vector<FieldType>& r,  // output
                                 int minDegree);
+  void computeG0(vector<FieldType>& alpha, // input
+                 vector<FieldType>& g0);   // output
 
 public:
   ECC();
@@ -372,16 +374,7 @@ setAlpha(vector<FieldType>& alpha){
     return;
   }
 
-  _g0.clear();
-  _g0.resize(2, *(_field->GetOne()));
-  _g0[0] =  *(_field->GetZero()) - alpha[0];
-  vector<FieldType> factor(2, *(_field->GetOne()));
-
-  for(int i=1; i<nPoints; i++){
-    factor[0] =  *(_field->GetZero()) - alpha[i];
-    multToPolynomial(factor, _g0);
-  }
-  
+  computeG0(alpha, _g0);
   return;
 }
 
@@ -394,8 +387,43 @@ setField(TemplateField<FieldType>* field){
 
 template <class FieldType>
 void ECC<FieldType>::
+computeG0(vector<FieldType> &alpha,
+          vector<FieldType> &g0) {
+
+  int nPoints = alpha.size();
+  // assert(nPoints > 0)
+  
+  g0.clear();
+  g0.resize(2, *(_field->GetOne()));
+  g0[0] =  *(_field->GetZero()) - alpha[0];
+  vector<FieldType> factor(2, *(_field->GetOne()));
+
+  for(int i=1; i<nPoints; i++){
+    factor[0] =  *(_field->GetZero()) - alpha[i];
+    multToPolynomial(factor, _g0);
+  }
+  return;
+}
+
+template <class FieldType>
+void ECC<FieldType>::
 setPartyInactive(int partyId) {
+  if (_alphaMask[partyId] == false) {
+    // nothing to do.
+    return;
+  }
+  // other wise, set mask
   _alphaMask[partyId] = false;
+
+  // and also recompute _g0
+  vector<FieldType> newAlpha = _alpha;
+  applyMask(newAlpha);
+  if (newAlpha.size() > 0) {
+    computeG0(newAlpha, _g0);
+  } else {
+    _g0.clear();
+  }
+
   return;
 }
 
@@ -420,9 +448,9 @@ printPolynomial(vector<FieldType>& p){
 template <class FieldType>
 bool ECC<FieldType>::
 reconstruct(vector<FieldType>& alpha, // input x of size n
-            vector<FieldType>& g0,     // input g0, of size n+1
-            vector<FieldType>& code, // input y of size n
-            int degree, // T-1
+            vector<FieldType>& g0,    // input g0, of size n+1
+            vector<FieldType>& code,  // input y of size n
+            int degree,               // T-1
             vector<FieldType>& polynomial){
 
   int nMessages = degree+1; // k
@@ -437,14 +465,6 @@ reconstruct(vector<FieldType>& alpha, // input x of size n
   // find u*g0 + v*g1 = g, with deg(g) < minDeg
   extendedEuclideanPartial(g0, g1, u, v, g, minDeg);
 
-  /* cout << "finished extended Euclidean Partial " << endl; */
-  /* cout << "u is :"; */
-  /* printPolynomial(u); */
-  /* cout << "v is :"; */
-  /* printPolynomial(v); */
-  /* cout << "g is :"; */
-  /* printPolynomial(g); */
-  
   // find f*v + r = g
   dividePolynomial(g, v, polynomial, r);
 
