@@ -474,7 +474,7 @@ consensus_base(bool b){
   bool firstGreater = true;
   
   for(int i=0; i<nRounds; i++){
-    cout << "-------- base round " << i << endl;
+    // cout << "-------- base round " << i << endl;
     // skip to next active party
     while( !_activeMask[kingIdx] ){ kingIdx++; }
     int kingId;
@@ -605,7 +605,7 @@ consensus(bool b){
   bool newb;
   for(int k=0; k<2; k++){
     // the two universal rounds
-    cout << "-------- round " << k << endl;
+    // cout << "-------- round " << k << endl;
     
     b = universal_rounds(b, D, receivedBits, receivedBits2);
 
