@@ -39,7 +39,8 @@ using namespace std::chrono;
 // 2. SCALAR and SCALAR_ADD gate types?
 
 template <class FieldType>
-class LinearParty : public Protocol, public HonestMajority, MultiParty{
+// class LinearParty : public Protocol, public HonestMajority, MultiParty{
+class LinearParty : public Protocol{
   
 private:
   
@@ -160,10 +161,10 @@ private:
   bool singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
                           FieldType& checkVal);
   // similarly create T random multiple-shares among parties
-  bool multipleShareRandom(const vector<int> degrees,
+  bool multipleShareRandom(const vector<int>& degrees,
                            vector< vector<FieldType> >& shares);
   // similarly create T random shares of 0 among parties
-  bool singleShareZero(int d, vector<FieldType> shares);
+  bool singleShareZero(int d, vector<FieldType>& shares);
 
   // ---- Reconstructions ----
   // reconstruct an element towards root. return 0 if fails
@@ -827,7 +828,7 @@ singleShareRandom(int d, vector<FieldType>& shares, FieldType& checkVal) {
 // -- and also that the reconstruced values are equal
 template <class FieldType>
 bool LinearParty<FieldType>::
-multipleShareRandom(const vector<int> degrees,
+multipleShareRandom(const vector<int>& degrees,
                     vector< vector<FieldType> > &shares) {
   bool happiness = true;
   int nShares = degrees.size();
@@ -850,7 +851,7 @@ multipleShareRandom(const vector<int> degrees,
 // similarly create T random shares of 0 among parties
 template <class FieldType>
 bool LinearParty<FieldType>::
-singleShareZero(int d, vector<FieldType> shares) {
+singleShareZero(int d, vector<FieldType>& shares) {
   bool happiness = true;
   vector<int> degrees(2, d);
   vector< vector<FieldType> > doubleShares;
@@ -860,7 +861,7 @@ singleShareZero(int d, vector<FieldType> shares) {
   for (int i = 0; i < _bigT; i++) {
     shares[i] = doubleShares[0][i] - doubleShares[1][i];
   }
-
+  
   return happiness;
 }
 
@@ -931,7 +932,11 @@ reconstructPublic(vector<FieldType>& shares,
   int nPartiesInc = _parties.size() + 1;
   int msgSize = _field->getElementSizeInBytes();
   int batchSize = shares.size();
-  
+
+  if (batchSize == 0) {
+    return true;
+  }
+
   // -- treat shares as a polynomial
   // -- expand to n points by evaluating at beta
   vector<FieldType> uSend(nPartiesInc);
@@ -1134,6 +1139,10 @@ checkConsistency(int kingId, vector<FieldType> &vals,
   int smallTp = (_nActiveParties - _bigT) / 2;
   int nPartiesInc = _parties.size() +1;
   int nVerifiers = _bigT + smallTp;
+
+  if (vals.size() == 0) {
+    return true;
+  }
 
   // computational phase
   // -- all parties compute r^1 ... r^{T+t'} using HIM
@@ -1356,10 +1365,10 @@ evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
   // ---- Need to record the used xShare and yShare by mult gates!
   int kingId = 0;
   while(!_activeMask[kingId]){kingId++;}
-  vector<FieldType> kingDs(_bigT);
-  vector<FieldType> kingEs(_bigT);
-  vector<FieldType> xShares(_bigT);
-  vector<FieldType> yShares(_bigT);
+  vector<FieldType> kingDs(_bigT, _zero);
+  vector<FieldType> kingEs(_bigT, _zero);
+  vector<FieldType> xShares(_bigT, _zero);
+  vector<FieldType> yShares(_bigT, _zero);
 
   for (auto gate : circuitSeg) {
     FieldType xShare = _wireShares[gate.input1];
@@ -1389,8 +1398,14 @@ evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
       break;
     }
   }
-  // assert(multOffset == _bigT);
 
+  if(multOffset == 0){
+    return true;
+  }
+  
+  // assert(multOffset == _bigT);
+  kingDs.resize(multOffset);
+  kingEs.resize(multOffset);
   // -- check the consistency of kingId
   happiness &= checkConsistency(kingId, kingDs, elimIds);
   if (!happiness) {
@@ -1402,9 +1417,9 @@ evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
   }
 
   // -- recompute all reconstructions (using recorded xShares and yShares)
-  vector<FieldType> dShares(_bigT);
-  vector<FieldType> eShares(_bigT);
-  for (int i = 0; i < _bigT; i++) {
+  vector<FieldType> dShares(multOffset, _zero);
+  vector<FieldType> eShares(multOffset, _zero);
+  for (int i = 0; i < multOffset; i++) {
     dShares[i] = xShares[i] + a[0][i];
     eShares[i] = yShares[i] + b[0][i];
   }
@@ -1412,20 +1427,19 @@ evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
   // -- if all check passes, return true.
   // -- otherwise, run faultLocalizationEvalSeg(). (= step 6 - 8 in paper)
   // -- TODO: maybe change here after implementing fault localization
-  vector<FieldType> reconsDs(_bigT);
+  vector<FieldType> reconsDs(multOffset, _zero);
   happiness &= reconstructPublic(dShares, reconsDs, _smallT);
-
   // assert(happiness); // ^^  this is robust
-  for (int i = 0; i < _bigT; i++) {
+  for (int i = 0; i < multOffset; i++) {
     if (reconsDs[i] != kingDs[i]) {
       faultLocalizeEvalSeg(elimIds);
       return false;
     }
   }
-  vector<FieldType> reconsEs(_bigT);
+  vector<FieldType> reconsEs(multOffset, _zero);
   happiness &= reconstructPublic(eShares, reconsEs, _smallT);
   // assert(happiness); // ^^  this is robust
-  for (int i = 0; i < _bigT; i++) {
+  for (int i = 0; i < multOffset; i++) {
     if (reconsEs[i] != kingEs[i]) {
       faultLocalizeEvalSeg(elimIds);
       return false;
@@ -1550,7 +1564,7 @@ template <class FieldType>
 void LinearParty<FieldType>::
 InputPhase(){
 
-  _wireShares.resize( _circuit.getNrOfGates() );
+  _wireShares.resize( _circuit.getNrOfGates(), _zero );
   int nPartiesInc = _parties.size() + 1;
   
   // batch share inputs until all inputs are shared
@@ -1638,11 +1652,12 @@ EvalPhase(){
       auto g = gates[gateIdx++];
       if (g.gateType != INPUT && g.gateType != OUTPUT) {
         seg.push_back( g );
-        nMults += (g.gateType == MULT);
+        nMults += (g.gateType == MULT || g.gateType == SCALAR);
         nGatesLeft--;
       }
     }
-
+    // cout << "evaluating " << gateIdx << "/" << nTotalGates
+    //      << " with " << nMults << " mult gates "<< endl;
     // evaluate a segment (repeatedly until success)
     vector<int> elimIds; // the first time, just eliminate nothing.
     bool success = false;
@@ -1721,7 +1736,6 @@ runOffline(){
   _singleZeroShares.resize(nBatches * _bigT);
   happiness = true;
   for (int i = 0; i < nBatches; i++) {
-    FieldType tmp;
     happiness &= singleShareZero(_smallT, batchResult);
     for (int j = 0; j < _bigT; j++) {
       _singleZeroShares[ i*_bigT + j ] = batchResult[j];
@@ -1745,7 +1759,6 @@ runOnline(){
   OutputPhase();
   return;
 }
-
 
 #endif /* LINEARPARTY_H_ */
 

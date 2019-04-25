@@ -269,7 +269,7 @@ FieldType ECC<FieldType>::
 evalPolynomial(FieldType x, 
                vector<FieldType>& polynomial){
   int degree = polynomial.size() - 1;
-  // assert(degree >= 0);
+  assert(degree >= 0);
   FieldType result = polynomial[0];
   FieldType x_value = *(_field->GetOne());
   for(int i=0; i<degree; i++){
