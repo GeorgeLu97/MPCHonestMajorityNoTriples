@@ -651,10 +651,11 @@ scatterForDealers(vector<FieldType>& sendElms,
   sort(dealerIds.begin(), dealerIds.end());
   recvElms.resize(nDealers);
   sendElms.resize(nPartiesInc);
-  
+   
   int msgSize = _field->getElementSizeInBytes();
   vector<byte> recvMsg(msgSize);
   vector< vector<byte> > sendMsgs(nParties, vector<byte>(msgSize));
+
   for(int i=0; i<nDealers; i++){
     int dealerId = dealerIds[i];
 
@@ -671,6 +672,7 @@ scatterForDealers(vector<FieldType>& sendElms,
       decodeFieldElt(recvMsg, recvElms[i]);
     }
   }
+
   return;
 }
 
@@ -690,7 +692,7 @@ gatherForDealers(vector<FieldType>& sendElms,
   
   int msgSize = _field->getElementSizeInBytes();
   vector<byte> sendMsg(msgSize);
-  vector< vector<byte> > recvMsgs(nParties, vector<byte>(msgSize));
+  vector< vector<byte> > recvMsgs;
   for(int i=0; i<nDealers; i++){
     int dealerId = dealerIds[i];
 
@@ -947,20 +949,23 @@ reconstructPublic(vector<FieldType>& shares,
   // -- send to corresponding parties (all-to-all)
   vector<FieldType> uRecv(nPartiesInc);
   scatterForAll(uSend, uRecv);
-  
+
+
   // -- reconstrcut f according to received, and send f(0) (all-to-all)
   vector<FieldType> f;
   bool success = _eccAlpha.reconstruct(uRecv, degree, f);
   if (!success) {
     return false;
   }
+
   FieldType f0;
   f0 = _eccAlpha.evalPolynomial(_zero, f);
   vector<byte> sendMsg(msgSize);
   vector< vector<byte> > recvMsgs(nParties, vector<byte>(msgSize));
   encodeFieldElt(f0, sendMsg);
+
   _baParty.broadcastMsgForAll(sendMsg, recvMsgs, msgSize);
-    
+
   // -- reconstruct g according to received
   // -- and coefficients are reconstruced values.
   vector<FieldType> recvF0(nPartiesInc);
@@ -983,7 +988,7 @@ generateTuples(vector< vector<FieldType> >& a,
                vector< vector<FieldType> >& b,
                vector<FieldType>& c){
   bool happiness = true;
-  
+
   // -- create triple random shares for a, b, and r w/ appropriate degrees 
   vector< vector<FieldType> > rShares;
   int smallTp = (_nActiveParties - _bigT) / 2;
@@ -1091,6 +1096,7 @@ evalMultGate(int kingId, FieldType &xShare, FieldType &yShare,
 // -- each party sends happiness to all others
 // -- set to unhappy if sees any unhappy
 // -- all parties run consensus on happiness
+// -- NOTE: assuming broadcast channel. no need for consensus
 template <class FieldType>
 bool LinearParty<FieldType>::
 faultDetection(bool happiness) {
@@ -1104,9 +1110,8 @@ faultDetection(bool happiness) {
   for (auto b : recvBits) {
     happiness &= b;
   }
-
   // -- all parties run consensus on happiness
-  happiness =_baParty.consensus(happiness);
+  happiness =_baParty.consensus_base(happiness);
   return happiness;
 }
 
@@ -1152,19 +1157,19 @@ checkConsistency(int kingId, vector<FieldType> &vals,
   _M.MatrixMult(paddedVals, expandedShares);
   expandedShares.resize(nVerifiers);
 
-
   // -- all parties send their values to corresponding dealer 
   vector<int> dealers;
   firstNActiveParties(nVerifiers, _activeMask, dealers);
   vector<FieldType> recvElms;
   gatherForDealers(expandedShares, recvElms, dealers);
+
   if (recvElms.size() > 0) {
     // I'm a verifier
     for (int i = 0; i < nPartiesInc - 1; i++) {
       happiness &= ( recvElms[i] == recvElms[i+1] );
     }
   }
-  
+
   // fault detection phase
   bool success = faultDetection(happiness);
 
@@ -1355,6 +1360,7 @@ evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
   happiness &= generateTuples(a, b, c);
   assert(happiness);
 
+
   // if (!happiness) {
   //   return false;
   // }
@@ -1407,6 +1413,7 @@ evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
   kingDs.resize(multOffset);
   kingEs.resize(multOffset);
   // -- check the consistency of kingId
+  cout << "checking consistency" << endl;
   happiness &= checkConsistency(kingId, kingDs, elimIds);
   if (!happiness) {
     return false;
@@ -1415,6 +1422,7 @@ evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
   if (!happiness) {
     return false;
   }
+  cout << "checked consistency" << endl;
 
   // -- recompute all reconstructions (using recorded xShares and yShares)
   vector<FieldType> dShares(multOffset, _zero);
@@ -1656,8 +1664,8 @@ EvalPhase(){
         nGatesLeft--;
       }
     }
-    // cout << "evaluating " << gateIdx << "/" << nTotalGates
-    //      << " with " << nMults << " mult gates "<< endl;
+    cout << "evaluating " << gateIdx << "/" << nTotalGates
+         << " with " << nMults << " mult gates "<< endl;
     // evaluate a segment (repeatedly until success)
     vector<int> elimIds; // the first time, just eliminate nothing.
     bool success = false;

@@ -244,7 +244,6 @@ exchangeBitWorker(bool sendBit, vector<bool>& recvBits,
     }
     recvBits[i] = (recvBytes[i] == 1);
   }
-  
   return;
 }
 
@@ -321,7 +320,6 @@ scatterMsgWorker(vector< vector<byte> >& sendMsgs,
                  int msgSize, int threadId, int nThread){
 
   int nParties = _partySocket.size();
-
   // communicate with other parties
   for(int i=threadId; i<nParties; i+=nThread){
     if(!_activeMask[i]){
@@ -474,12 +472,12 @@ consensus_base(bool b){
   bool firstGreater = true;
   
   for(int i=0; i<nRounds; i++){
-    // cout << "-------- base round " << i << endl;
     // skip to next active party
     while( !_activeMask[kingIdx] ){ kingIdx++; }
     int kingId;
     bool isKing;
     if(_partySocket[kingIdx]->getID() > _myId && firstGreater){
+      kingIdx--;
       kingId = _myId;
       isKing = true;
       firstGreater = false;
@@ -496,6 +494,8 @@ consensus_base(bool b){
       int nSamePlayers = b ? D[1] : D[0];
       b = (nSamePlayers < _nActiveParties - smallT) ? newb : b;
     }// else b == newb. do nothing
+
+    kingIdx++;
   }
   
   return b;
@@ -597,7 +597,7 @@ consensus(bool b){
   // -- divide commitees by consecutive active members
   vector<char> commitee_mask(nParties, 2);
   int myCommitee = splitCommitee(commitee_mask, QCount);
-  // printCommitee(commitee_mask, myCommitee);
+  printCommitee(commitee_mask, myCommitee);
 
   // actual protocol
   vector<bool> receivedBits(nParties);
@@ -670,13 +670,11 @@ exchangeMsgWorker(vector<byte>& sendMsg,
                   int msgSize, int threadId, int nThread){
 
   int nParties = _partySocket.size();
-  recvMsgs.clear();
-  recvMsgs.resize(nParties, vector<byte>(msgSize));
-
   for (int i = threadId; i < nParties; i += nThread) {
     if (!_activeMask[i]) {
       continue;
     }
+    recvMsgs[i].resize(msgSize);
 
     if (_myId < _partySocket[i]->getID()) {
       // write before read
@@ -703,6 +701,8 @@ broadcastMsgForAll(vector<byte>& sendMsg, // input
   
   vector<thread> threads(_nThread);
   sendMsg.resize(msgSize);
+  recvMsgs.clear();
+  recvMsgs.resize(_partySocket.size(), vector<byte>(msgSize));
   for(int i=0; i<_nThread; i++){
     threads[i] = thread(&BAParty::exchangeMsgWorker, this,
                         ref(sendMsg), ref(recvMsgs), msgSize, i, _nThread);
@@ -818,7 +818,7 @@ gatherMsg(vector<byte>& sendMsg, vector< vector<byte> >& recvMsgs,
 
   if(rootId == _myId){
 
-    recvMsgs.resize(nParties);
+    recvMsgs.resize(nParties, vector<byte>(msgSize));
     vector<thread> threads(_nThread);
     for(int i=0; i<_nThread; i++){
       threads[i] = thread(&BAParty::gatherMsgWorker, this,
