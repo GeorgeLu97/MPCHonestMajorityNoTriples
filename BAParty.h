@@ -436,7 +436,8 @@ universal_rounds(bool b, int* D,
   int smallT = (_nActiveParties-1) /3;
   int nParties = _partySocket.size();
   int C[] = {0, 0};
-
+  C[b]++; // add my own bit to count
+  
   // first universal excange round.
   exchangeBit(b, buffer);
   for(int j=0; j<nParties; j++){
@@ -597,7 +598,7 @@ consensus(bool b){
   // -- divide commitees by consecutive active members
   vector<char> commitee_mask(nParties, 2);
   int myCommitee = splitCommitee(commitee_mask, QCount);
-  printCommitee(commitee_mask, myCommitee);
+  // printCommitee(commitee_mask, myCommitee);
 
   // actual protocol
   vector<bool> receivedBits(nParties);
@@ -605,10 +606,8 @@ consensus(bool b){
   bool newb;
   for(int k=0; k<2; k++){
     // the two universal rounds
-    // cout << "-------- round " << k << endl;
-    
     b = universal_rounds(b, D, receivedBits, receivedBits2);
-
+    
     if(myCommitee == k){
       // if it's my commitee's turn
       // -- set the other commitee to in-active
@@ -617,7 +616,6 @@ consensus(bool b){
       mapCommitee(commitee_mask, QCount, myCommitee);
       newb = consensus(b);
       unmapCommitee(commitee_mask, QCount, myCommitee);
-
       commiteeSendBit(commitee_mask, QCount, myCommitee, newb);
     }else{
       // if not my commitee's turn

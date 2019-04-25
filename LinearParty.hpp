@@ -1111,7 +1111,7 @@ faultDetection(bool happiness) {
     happiness &= b;
   }
   // -- all parties run consensus on happiness
-  happiness =_baParty.consensus_base(happiness);
+  happiness =_baParty.consensus(happiness);
   return happiness;
 }
 
@@ -1413,7 +1413,6 @@ evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
   kingDs.resize(multOffset);
   kingEs.resize(multOffset);
   // -- check the consistency of kingId
-  cout << "checking consistency" << endl;
   happiness &= checkConsistency(kingId, kingDs, elimIds);
   if (!happiness) {
     return false;
@@ -1422,7 +1421,6 @@ evalSeg(vector<TGate>& circuitSeg, vector<int>& elimIds){
   if (!happiness) {
     return false;
   }
-  cout << "checked consistency" << endl;
 
   // -- recompute all reconstructions (using recorded xShares and yShares)
   vector<FieldType> dShares(multOffset, _zero);
@@ -1664,8 +1662,8 @@ EvalPhase(){
         nGatesLeft--;
       }
     }
-    cout << "evaluating " << gateIdx << "/" << nTotalGates
-         << " with " << nMults << " mult gates "<< endl;
+    // cout << "evaluating " << gateIdx << "/" << nTotalGates
+    //      << " with " << nMults << " mult gates "<< endl;
     // evaluate a segment (repeatedly until success)
     vector<int> elimIds; // the first time, just eliminate nothing.
     bool success = false;
