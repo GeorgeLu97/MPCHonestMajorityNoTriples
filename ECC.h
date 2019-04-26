@@ -89,7 +89,7 @@ public:
 
   
   // the class version: using a fixed alpha vector as x values
-  void setAlpha(vector<FieldType>& alpha);
+  void setAlpha(vector<FieldType> alpha);
   
   
   void interpolate(vector<FieldType>& y,
@@ -335,7 +335,7 @@ interpolate(vector<FieldType>& y,
 
 template<class FieldType> 
 void ECC<FieldType>::
-setAlpha(vector<FieldType>& alpha){
+setAlpha(vector<FieldType> alpha){
 
   trimZeroes(alpha);
   _alpha = alpha;

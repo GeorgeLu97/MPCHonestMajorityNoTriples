@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include <x86intrin.h>
 
-
 template <class FieldType>
 void testReconstruct(const vector<int>& poly,
                      const vector<int>& alpha,
@@ -60,7 +59,7 @@ void testReconstruct(const vector<int>& poly,
   cout << endl;
   
   return;
-}
+} 
 
 // a BA protocol as a subprotocol
 
@@ -114,8 +113,6 @@ int main(int argc, char* argv[])
         cout << "time in milliseconds for " << times << " runs: " << duration << endl;
         cout << "end main" << '\n';
     }
-
-
 
     else if(fieldType.compare("GF2m") == 0)
     {
