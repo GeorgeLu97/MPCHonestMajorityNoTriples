@@ -222,7 +222,7 @@ public:
     vector<vector<vector<byte>>>& inputs, vector<vector<vector<byte>>>& outputs);
 
     //modification - do fault detection/localization here.
-    void generateTriples(vector<tuple<FieldType, FieldType, FieldType>>& randomTriples);
+    void generateTriples(vector<tuple<FieldType, FieldType, FieldType>>& randomTriples, int triplesNeeded);
 
     void removeParties(int party1, int party2);
 
@@ -304,7 +304,7 @@ public:
 
 template <class FieldType> 
 void ProtocolParty<FieldType>::printVector(vector<FieldType>& input) {
-    if(input.size() == 0) {return;}
+    if(input.size() == 0) { cout << "[ ]" << endl; return; }
     cout << "[" << input[0];
     for(int i = 1; i < input.size(); i++) {
         cout << ", " << input[i];
@@ -736,8 +736,11 @@ void ProtocolParty<FieldType>::decodeFieldElts(vector<byte>& input, vector<Field
 template <class FieldType>
 bool ProtocolParty<FieldType>::checkConsistency(vector<FieldType>& x, int d)
 {
-    vector<FieldType> alpha = getAlpha();
-    return checkConsistency(alpha, x, d);
+    //vector<FieldType> alpha = getAlpha();
+    //return checkConsistency(alpha, x, d);
+    vector<FieldType> r;
+    lagrange(x, r);
+    return (r.size() <= (d + 1));
 }
 
 /* p is input fieldelt's */
@@ -799,7 +802,11 @@ FieldType ProtocolParty<FieldType>::interpolate(vector<FieldType>& x, int d)
 
     vector<FieldType> coeff;
     interpolateCoefficients(x, d, coeff);
-    return coeff[0];
+    if(coeff.size() == 0) {
+        return *(field->GetZero());
+    } else {
+        return coeff[0];
+    }
 }
 
 template <class FieldType>
@@ -810,7 +817,10 @@ bool ProtocolParty<FieldType>::interpolateCoefficients(vector<FieldType>& x, int
     if(coefficients.size() > d + 1) {
         coefficients.clear();
         return ecc.reconstruct(x, d, coefficients);
+    } else {
+        return true;
     }
+
 }
 
 //alpha should be N' long
@@ -902,15 +912,12 @@ FieldType ProtocolParty<FieldType>::reconstructPrivate(FieldType secretShare, in
     vector<byte> ssb(field->getElementSizeInBytes());
     field->elementToBytes(ssb.data(), secretShare);
     if(m_partyId == partyID) {
-        cout << m_partyId << "rp1" << endl;
         vector<vector<byte>> allShares(N1);
         vector<FieldType> allSharesTrue(N1);
         for(int i = 0; i < N1; i++) {
             allShares[i].resize(field->getElementSizeInBytes());
         } 
-        cout << m_partyId << "rp2" << endl;
         roundFunctionSyncForP1(ssb, allShares);
-        cout << m_partyId << "rp3" << endl;
         for(int i = 0; i < N1; i++) {
             allSharesTrue[i] = field->bytesToElement(allShares[i].data());
         }
@@ -918,9 +925,8 @@ FieldType ProtocolParty<FieldType>::reconstructPrivate(FieldType secretShare, in
 
         return ans;
     } else if(selfActive) {
-        cout << m_partyId << "writeSize" << ssb.size() << endl;
+        //cout << m_partyId << "writeSize" << ssb.size() << endl;
         activeParties[partyID]->getChannel()->write(ssb.data(), ssb.size());
-        cout << m_partyId << "rp5" << endl;
         //parties[partyID]->getChannel()->read(ssb.data(), ssb.size());
         //return field->bytesToElement(ssb.data());
         return *(field->GetZero());
@@ -1308,6 +1314,7 @@ bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vecto
     vector<FieldType> alpha = getAlpha();
     vector<vector<FieldType>> d1coefficients(iter);
     vector<vector<FieldType>> d2coefficients(iter);
+
     for(int j = 0; j < iter; j++) {
         FieldType secret = field->Random();
         d1coefficients[j].push_back(secret);
@@ -1422,6 +1429,7 @@ bool ProtocolParty<FieldType>::doubleShareRandom(int degree1, int degree2, vecto
         if(!checkConsistency(v1shareTR[i], degree1) || !checkConsistency(v2shareTR[i], degree2) || 
             interpolate(v1shareTR[i], degree1) != interpolate(v2shareTR[i], degree2)) {
             happiness = false;
+            break;
         }
     }
 
@@ -1761,7 +1769,7 @@ pair<int,int> ProtocolParty<FieldType>::doubleShareRandomVerifyAll(int degree1, 
 //work refereeing into end of function they're in;
 //will restart until succeed;
 template <class FieldType>
-void ProtocolParty<FieldType>::generateTriples(vector<tuple<FieldType, FieldType, FieldType>>& randomTriples) {
+void ProtocolParty<FieldType>::generateTriples(vector<tuple<FieldType, FieldType, FieldType>>& randomTriples, int triplesNeeded) {
     while(selfActive) {
         vector<tuple<FieldType, FieldType>> a;
         vector<tuple<FieldType, FieldType>> b;
@@ -1769,15 +1777,17 @@ void ProtocolParty<FieldType>::generateTriples(vector<tuple<FieldType, FieldType
         vector<FieldType> d;
         vector<FieldType> dtrue;
 
+        cout << "Triples Begin" << endl;
+
         if( 
-            !doubleShareRandom(T, T1, a, 1) ||
-            !doubleShareRandom(T, T1, b, 1) ||
-            !doubleShareRandom(T, 2*T1, r, 1)
+            !doubleShareRandom(T, T1, a, (triplesNeeded / bigT) + 1) ||
+            !doubleShareRandom(T, T1, b, (triplesNeeded / bigT) + 1) ||
+            !doubleShareRandom(T, 2*T1, r, (triplesNeeded / bigT) + 1)
         ) {
             continue;
         }
 
-        //cout << "Doubles Generated: " << T << " "<< T1 << endl;
+        cout << "Doubles Generated: " << T << " "<< T1 << endl;
 
         /*
         for(int i = 0; i < a.size(); i++) {
@@ -1796,7 +1806,7 @@ void ProtocolParty<FieldType>::generateTriples(vector<tuple<FieldType, FieldType
 
         //tuple<FieldType, FieldType, FieldType> lastTriple = randomTriples[randomTriples.size() - 1];
         //cout << m_partyId << ": (" << get<0>(lastTriple) << ", " << get<1>(lastTriple) << ", "<< get<2>(lastTriple) <<")"<< endl;
-
+        cout << "RandomTripleCount" << randomTriples.size() << endl;
         return;
     }
 
@@ -1963,7 +1973,7 @@ int ProtocolParty<FieldType>::processMultiplications(int lastMultGate)
 
     for(int i = 0; i < numProcessed; i++) {
         gateShareArr[outind[i]] = dr[i] * er[i] + dr[i] * b[i] + er[i] * a[i] + c[i];
-        cout << "Party: " << m_partyId << " Gate: m" << outind[i] << " output: " << gateShareArr[outind[i]] << endl;
+        //cout << "Party: " << m_partyId << " Gate: m" << outind[i] << " output: " << gateShareArr[outind[i]] << endl;
     }
     return numProcessed;
 }
@@ -1972,8 +1982,7 @@ int ProtocolParty<FieldType>::processMultiplications(int lastMultGate)
 template <class FieldType>
 int ProtocolParty<FieldType>::processNotMult(){
     int count=0;
-    cout << m_partyId << "gateShareArr1";
-    printVector(gateShareArr);
+    //printVector(gateShareArr);
     for(int k=circuit.getLayers()[currentCirciutLayer]; k < circuit.getLayers()[currentCirciutLayer+1]; k++)
     {
 
@@ -2016,12 +2025,14 @@ int ProtocolParty<FieldType>::processNotMult(){
             count++;
         }
 
-        cout << "Party: " << m_partyId << " Gate: " << circuit.getGates()[k].output << "index: " << k << " output: " << gateShareArr[circuit.getGates()[k].output] << gateType << endl;
+        //cout << "Party: " << m_partyId << " Gate: " << circuit.getGates()[k].output << "index: " << k << " output: " << gateShareArr[circuit.getGates()[k].output] << gateType << endl;
 
     }
 
+    /*
     cout << m_partyId << "gateShareArr2";
     printVector(gateShareArr);
+    */
     return count;
 
 }
@@ -2146,13 +2157,16 @@ bool ProtocolParty<FieldType>::preparationPhase()
     randomSharesOffset = 0; //use this for triples instead
     int triplesNeeded = circuit.getNrOfInputGates() + 
     circuit.getNrOfMultiplicationGates() + circuit.getNrOfRandomGates();
+    generateTriples(randomTriplesArray, triplesNeeded);
+
+    /*
     for(int gS = 0; gS < triplesNeeded; gS += bigT) {
-        generateTriples(randomTriplesArray);
+        generateTriples(randomTriplesArray, triplesNeeded);
         
         if(flag_print_timings && m_partyId == activePartyIDs[0]) {
             if(((gS + bigT) % 20) < (gS % 20)) { cout << "Triples Generated: " << gS+bigT << "/" << triplesNeeded << endl; }
         }
-    }
+    } */
 
     return true;
 }
@@ -2173,8 +2187,10 @@ void ProtocolParty<FieldType>::inputPhase()
 
     // prepare the shares for the input
     //TODO: batch this
+    /*
     cout << "gateShareArr1";
     printVector(gateShareArr);
+    */
 
     while(k < numOfInputGates)
     {
@@ -2198,7 +2214,7 @@ void ProtocolParty<FieldType>::inputPhase()
 
                 int gateshareindex = circuit.getGates()[ind].output;
                 gateShareArr[gateshareindex] = randomShare + s - output;
-                cout << "Party: " << m_partyId << " Gate: " << ind << " Index " << gateshareindex << " RandomInput: " << gateShareArr[circuit.getGates()[ind].output] << endl;
+                //cout << "Party: " << m_partyId << " Gate: " << ind << " Index " << gateshareindex << " RandomInput: " << gateShareArr[circuit.getGates()[ind].output] << endl;
             } else if(selfActive) {
 
                 vector<byte> sminusrbytes(field->getElementSizeInBytes());
@@ -2207,7 +2223,7 @@ void ProtocolParty<FieldType>::inputPhase()
 
                 int gateshareindex = circuit.getGates()[ind].output;
                 gateShareArr[gateshareindex] = randomShare + field->bytesToElement(sminusrbytes.data());
-                cout << "Party: " << m_partyId << " Gate: " << ind << " Index " << gateshareindex << " RandomInput: " << gateShareArr[circuit.getGates()[ind].output] << endl;
+                //cout << "Party: " << m_partyId << " Gate: " << ind << " Index " << gateshareindex << " RandomInput: " << gateShareArr[circuit.getGates()[ind].output] << endl;
             }
             k++;
             if(flag_print_timings) {
@@ -2221,15 +2237,13 @@ void ProtocolParty<FieldType>::inputPhase()
         }
     }
 
-    cout << "gateShareArr";
-    printVector(gateShareArr);
-
     size_t numgates = circuit.getGates().size();
+    /*
     for(size_t i = 0; i < numgates; i++) {
         if(circuit.getGates()[i].gateType == INPUT) {
             cout << "Party: " << m_partyId << " Gate: i" << i << " output: " << gateShareArr[circuit.getGates()[i].output] << endl;
         }
-    }
+    } */
 }
 
 template <class FieldType>
