@@ -20,7 +20,7 @@ link_directories(/usr/ssl/lib/ $ENV{HOME}/libscapi/install/lib )
 add_executable(MPCHonestMajorityNoTriples ${SOURCE_FILES})
 
 # /home/hanjun/libscapi/build/NTL/src
-# TARGET_LINK_LIBRARIES(MPCHonestMajorityNoTriples $ENV{HOME}/ntl-9.10.0/src/ntl.a
-TARGET_LINK_LIBRARIES(MPCHonestMajorityNoTriples $ENV{HOME}/libscapi/build/NTL/src/ntl.a
+TARGET_LINK_LIBRARIES(MPCHonestMajorityNoTriples $ENV{HOME}/ntl-9.10.0/src/ntl.a
+# TARGET_LINK_LIBRARIES(MPCHonestMajorityNoTriples $ENV{HOME}/libscapi/build/NTL/src/ntl.a
         $ENV{HOME}/libscapi/libscapi.a gmp gmpxx
         libboost_system.a libboost_thread.a pthread crypto dl ssl z)
