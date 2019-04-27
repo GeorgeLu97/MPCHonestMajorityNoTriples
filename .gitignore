@@ -1,6 +1,7 @@
 .idea/
 *.csv
 CMakeFiles/
+CMakeLists.txt
 CMakeCache.txt
 cmake-build-debug
 cmake_install.cmake
