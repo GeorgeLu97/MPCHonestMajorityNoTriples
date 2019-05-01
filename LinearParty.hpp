@@ -482,7 +482,7 @@ run(){
   auto duration =
     duration_cast<milliseconds>(end-start).count();
 
-  cout << "time in milliseconds initializationPhase: "
+  cout << "time in milliseconds: "
        << duration << endl;
 
   return;
@@ -693,31 +693,35 @@ gatherForDealers(vector<FieldType>& sendElms,
                  vector<FieldType>& recvElms,
                  vector<int>& dealerIds) {
   int nDealers = dealerIds.size();  
-
   
   sendElms.resize(nDealers);
   recvElms.clear(); // <---- non-dealer can check recvElms.size()
   // <---------------------- to know that they are not dealers
-  
   int msgSize = _field->getElementSizeInBytes();
-  vector<byte> sendMsg(msgSize);
-  vector< vector<byte> > recvMsgs;
+  bool isDealer = false;
+  for(auto dealerId : dealerIds){
+    isDealer |= (dealerId == _myId);
+  }
+
+  vector<vector<byte>> sendMsgs(_nPartiesInc);
+  vector<vector<byte>> recvMsgs(_nPartiesInc);
   for(int i=0; i<nDealers; i++){
     int dealerId = dealerIds[i];
-
-    if ( dealerId == _myId) {
-      recvElms.resize(_nPartiesInc);
-      recvElms[_myId] = sendElms[i];
-      _baParty.gatherMsg(sendMsg, recvMsgs, msgSize, dealerId);
-      
-      for (int j = 0; j < _nParties; j++) {
-        decodeFieldElt(recvMsgs[j], recvElms[ _parties[j]->getID() ]);
-      }
-      
-    } else {
-      encodeFieldElt(sendElms[i], sendMsg);
-      _baParty.gatherMsg(sendMsg, recvMsgs, msgSize, dealerId);
+    encodeFieldElt(sendElms[i],sendMsgs[dealerId]);
+  }
+  
+  if(isDealer){
+    _baParty.sendAndRecvMsgs(sendMsgs, recvMsgs,
+                             msgSize, dealerIds, _partyIds);
+    recvMsgs[_myId] = sendMsgs[_myId];
+    recvElms.resize(_nPartiesInc);
+    for(int i=0; i<_nPartiesInc; i++){
+      decodeFieldElt(recvMsgs[i], recvElms[i]);
     }
+  }else{
+    vector<int> readList;
+    _baParty.sendAndRecvMsgs(sendMsgs, recvMsgs,
+                             msgSize, dealerIds, readList);
   }
 
   return;
