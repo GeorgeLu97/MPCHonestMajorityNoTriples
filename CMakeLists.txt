@@ -3,6 +3,7 @@ project(MPCHonestMajorityNoTriples)
 
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O3 -std=c++11 -maes -mpclmul -mbmi2 -pthread")
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 INCLUDE_DIRECTORIES($ENV{HOME} $ENV{HOME}/libscapi/install/include
         $ENV{HOME}/libscapi/install/include/OTExtensionBristol)

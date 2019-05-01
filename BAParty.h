@@ -43,6 +43,7 @@ private:
   int _basePartyCount = 3;
   int _nActiveParties;
   vector<bool> _activeMask;     // mask to active players
+  vector<int> _partyIds;
   vector< shared_ptr<ProtocolPartyData> > _partySocket; // for communication
   vector<FieldType> _alpha;  // <-- the commonly known elements to all
   vector<FieldType> _beta;   //     ..one for each party
@@ -66,6 +67,12 @@ private:
                        int msgSize, int threadId, int nThread);
   void scatterMsgWorker(vector< vector<byte> >& sendMsgs,
                         int msgSize, int threadId, int nThread);
+
+
+  void sendAndRecvMsgsWorker(vector< vector<byte> >& sendMsgs,
+                             vector< vector<byte> >& recvMsgs,
+                             int msgSize, int threadId, int nThread,
+                             const vector<char> opMask);
 
   // used in base Phase King. (moved to public)
   // bool spreadBit(bool sendBit, int kingId);
@@ -119,6 +126,13 @@ public:
                           vector< vector<byte> >& recvMsgs,
                           int msgSize);
 
+  // -------- optimized funtionalities --------
+  void sendAndRecvMsgs(vector< vector<byte> >& sendMsgs,
+                       vector< vector<byte> >& recvMsgs,
+                       int msgSize,
+                       const vector<int>& writeList,
+                       const vector<int>& readList);
+  
 };
 
 
@@ -146,6 +160,10 @@ setParties(vector< shared_ptr<ProtocolPartyData> >& parties, int myId){
   // set default masks
   _activeMask.clear();
   _activeMask.resize(nParties, true);
+  _partyIds.resize(nParties);
+  for(int i=0; i<nParties; i++){
+    _partyIds[i] = parties[i]->getID();
+  }
   _nActiveParties = nParties +1; // counting myself
   return;
 }
@@ -837,6 +855,79 @@ gatherMsg(vector<byte>& sendMsg, vector< vector<byte> >& recvMsgs,
     }    
   }
 
+  return;
+}
+
+
+template <class FieldType>
+void BAParty<FieldType>::
+sendAndRecvMsgsWorker(vector< vector<byte> >& sendMsgs,
+                      vector< vector<byte> >& recvMsgs,
+                      int msgSize, int threadId, int nThread,
+                      const vector<char> opMask){
+  int nParties = _partySocket.size();
+  for(int i=threadId; i<nParties; i+=nThread){
+    if(!_activeMask[i]){
+      continue;
+    }
+    int partyId = _partyIds[i];
+    // otherwise do read write
+    switch(opMask[partyId]){
+    case 0:
+      break;
+    case 1: // read
+      recvMsgs[partyId].resize(msgSize);
+      _partySocket[i]->getChannel()->read(recvMsgs[partyId].data(), msgSize);
+      break;
+    case 2: // write
+      _partySocket[i]->getChannel()->write(sendMsgs[partyId].data(), msgSize);
+      break;
+    case 3: // both
+      recvMsgs[partyId].resize(msgSize);
+      if(_myId < partyId){      // write before read
+        _partySocket[i]->getChannel()->
+          write(sendMsgs[partyId].data(), msgSize);
+        _partySocket[i]->getChannel()->
+          read(recvMsgs[partyId].data(), msgSize);
+      }else{                    // read before write
+        _partySocket[i]->getChannel()->
+          read(recvMsgs[partyId].data(), msgSize);
+        _partySocket[i]->getChannel()->
+          write(sendMsgs[partyId].data(), msgSize);
+      }
+      break;
+    }
+  }
+  return;
+}
+
+template <class FieldType>
+void BAParty<FieldType>::
+sendAndRecvMsgs(vector< vector<byte> >& sendMsgs,
+                vector< vector<byte> >& recvMsgs,
+                int msgSize,
+                const vector<int>& writeList,
+                const vector<int>& readList){
+  // a mask w/ 0 <=> do nothing; 1 <=> read; 2 <=> write; 3 <=> both;
+  vector<char> opMask(_partySocket.size(), 0); 
+  for(auto id : readList){
+    opMask[id] += 1;
+  }
+  for(auto id : writeList){
+    opMask[id] += 2;
+  }
+  // myself is also a thread 
+  vector<thread> threads(_nThread-1);
+  for(int i=0; i<(_nThread-1); i++){
+    threads[i] = thread(&BAParty::sendAndRecvMsgsWorker, this,
+                        ref(sendMsgs), ref(recvMsgs),
+                        msgSize, i, _nThread, ref(opMask));
+  }
+  sendAndRecvMsgsWorker( sendMsgs, recvMsgs, msgSize,
+                         _nThread-1, _nThread, opMask);
+  for(int i=0; i<(_nThread-1); i++){
+    threads[i].join();
+  }
   return;
 }
 
