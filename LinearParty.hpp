@@ -25,14 +25,16 @@
 using namespace std;
 using namespace std::chrono;
 
-// Plan: adapt & test existing code by George bit by bit.
-// - fault localization
+// TODO
 // - performance testing
-// - (trivial) malicious party
 // - optimizations
+// - fault localization
+// - (trivial) malicious party
 
-// TODO:
+
+// Check:
 // 1 check that all inactive elements are 0.
+// 2 check 
 
 // Questions:
 // 1. Error checking during protocol (e.g. timeout communication?)
@@ -47,6 +49,8 @@ private:
   // ======== protocol properties ========
   int _myId;
   int _nActiveParties;
+  int _nParties;
+  int _nPartiesInc;
   int _bigT;
   int _smallT;
   int _nThread;
@@ -70,6 +74,7 @@ private:
   vector< shared_ptr<ProtocolPartyData> > _parties;
   // _activeMask[ partyId ] == 1 if partyId is active.
   vector<bool> _activeMask;
+  vector<int> _partyIds;
   // has size 3. each of size at most _smallT + 1
   vector< vector<int> > _partition;
 
@@ -375,6 +380,14 @@ makeParties(){
 
   _activeMask.clear();
   _activeMask.resize(_nActiveParties, true);
+
+  _nPartiesInc = _nActiveParties;
+  _nParties = _nPartiesInc-1;
+  _partyIds.resize(_nParties);
+  for(int i=0; i<_nParties; i++){
+    _partyIds[i] = _parties[i]->getID();
+  }
+  
   return;
 }
 
@@ -486,7 +499,7 @@ run(){
   auto duration =
     duration_cast<milliseconds>(end-start).count();
 
-  cout << "time in milliseconds initializationPhase: "
+  cout << "time in milliseconds: "
        << duration << endl;
 
   return;
@@ -556,8 +569,7 @@ void LinearParty<FieldType>::
 spreadElms(vector<FieldType>& buffer,
            int nElements, int rootId){
 
-  vector<byte> msg;
-  int nParties = _parties.size();
+  vector<byte> msg; 
   int msgSize = _field->getElementSizeInBytes() * nElements;
 
   if (rootId == _myId) {
@@ -578,10 +590,9 @@ template <class FieldType>
 void LinearParty<FieldType>::
 prepareExpandedElms(vector<FieldType>& polynomial,
                     vector<FieldType>& expandedElms){
-
-  int nPartiesInc = _parties.size()+1;
-  expandedElms.resize(nPartiesInc);
-  for (int i = 0; i < nPartiesInc; i++) {
+ 
+  expandedElms.resize(_nPartiesInc);
+  for (int i = 0; i < _nPartiesInc; i++) {
     expandedElms[i] = _eccAlpha.evalPolynomial(_alpha[i], polynomial);
   }
 
@@ -601,8 +612,7 @@ robustBatchBroadcast(vector<FieldType>& sendElms, // input
                      vector< vector<FieldType> >& recvElms, // output
                      int nElements,  vector<int>& dealerIds){
 
-  // sort dealerIds. 
-  int nParties = _parties.size();
+  // sort dealerIds.  
   int nDealers = dealerIds.size();
   int elmSize = _field->getElementSizeInBytes();
 
@@ -621,13 +631,13 @@ robustBatchBroadcast(vector<FieldType>& sendElms, // input
   
   // each party decode received shares
   vector< vector<FieldType> > // each row is an expanded code.
-    allExpandedElms(nDealers, vector<FieldType>(nParties+1));
+    allExpandedElms(nDealers, vector<FieldType>(_nPartiesInc));
   for (int i = 0; i < nDealers; i++) {
     allExpandedElms[i][ _myId ] = recvExpandedElms[i];
   }
 
   vector<FieldType> tmpVector;
-  for (int i = 0; i < nParties; i++) {
+  for (int i = 0; i < _nParties; i++) {
     int partyId = _parties[i]->getID();
     decodeFieldElts(recvMsgs[i], tmpVector);
     for (int j = 0; j < nDealers; j++) {
@@ -662,34 +672,35 @@ void LinearParty<FieldType>::
 scatterForDealers(vector<FieldType>& sendElms,
                   vector<FieldType>& recvElms,
                   vector<int>& dealerIds) {
-  int nDealers = dealerIds.size();
-  int nParties = _parties.size();
-  int nPartiesInc = _parties.size() +1;
+  int nDealers = dealerIds.size();  
   sort(dealerIds.begin(), dealerIds.end());
   recvElms.resize(nDealers);
-  sendElms.resize(nPartiesInc);
-   
+  sendElms.resize(_nPartiesInc);
   int msgSize = _field->getElementSizeInBytes();
-  vector<byte> recvMsg(msgSize);
-  vector< vector<byte> > sendMsgs(nParties, vector<byte>(msgSize));
+  bool isDealer = false;
+  for(auto dealerId : dealerIds){
+    isDealer |= (dealerId == _myId);
+  }
+
+  vector<vector<byte>> sendMsgs(_nPartiesInc);
+  vector<vector<byte>> recvMsgs(_nPartiesInc);
+  if(isDealer){
+    for(int i=0; i<_nPartiesInc; i++){
+      encodeFieldElt(sendElms[i], sendMsgs[i]);
+    }
+    _baParty.sendAndRecvMsgs(sendMsgs, recvMsgs,
+                             msgSize, _partyIds, dealerIds);
+    recvMsgs[_myId] = sendMsgs[_myId];
+  }else{
+    vector<int> writeList;
+    _baParty.sendAndRecvMsgs(sendMsgs, recvMsgs,
+                             msgSize, writeList, dealerIds);
+  }
 
   for(int i=0; i<nDealers; i++){
     int dealerId = dealerIds[i];
-
-    if ( dealerId == _myId) {
-      recvElms[i] = sendElms[_myId];
-      for (int j = 0; j < nParties; j++) {
-        encodeFieldElt(sendElms[ _parties[j]->getID() ], sendMsgs[j]);
-      }
-      _baParty.scatterMsg(sendMsgs, recvMsg, msgSize, dealerId);
-      
-    } else {
-      // receive message and store
-      _baParty.scatterMsg(sendMsgs, recvMsg, msgSize, dealerId);
-      decodeFieldElt(recvMsg, recvElms[i]);
-    }
+    decodeFieldElt(recvMsgs[ dealerId ], recvElms[i]);
   }
-
   return;
 }
 
@@ -734,34 +745,36 @@ void LinearParty<FieldType>::
 gatherForDealers(vector<FieldType>& sendElms,
                  vector<FieldType>& recvElms,
                  vector<int>& dealerIds) {
-  int nDealers = dealerIds.size();
-  int nParties = _parties.size();
-  int nPartiesInc = _parties.size() +1;
-
+  int nDealers = dealerIds.size();  
   
   sendElms.resize(nDealers);
   recvElms.clear(); // <---- non-dealer can check recvElms.size()
   // <---------------------- to know that they are not dealers
-  
   int msgSize = _field->getElementSizeInBytes();
-  vector<byte> sendMsg(msgSize);
-  vector< vector<byte> > recvMsgs;
+  bool isDealer = false;
+  for(auto dealerId : dealerIds){
+    isDealer |= (dealerId == _myId);
+  }
+
+  vector<vector<byte>> sendMsgs(_nPartiesInc);
+  vector<vector<byte>> recvMsgs(_nPartiesInc);
   for(int i=0; i<nDealers; i++){
     int dealerId = dealerIds[i];
-
-    if ( dealerId == _myId) {
-      recvElms.resize(nPartiesInc);
-      recvElms[_myId] = sendElms[i];
-      _baParty.gatherMsg(sendMsg, recvMsgs, msgSize, dealerId);
-      
-      for (int j = 0; j < nParties; j++) {
-        decodeFieldElt(recvMsgs[j], recvElms[ _parties[j]->getID() ]);
-      }
-      
-    } else {
-      encodeFieldElt(sendElms[i], sendMsg);
-      _baParty.gatherMsg(sendMsg, recvMsgs, msgSize, dealerId);
+    encodeFieldElt(sendElms[i],sendMsgs[dealerId]);
+  }
+  
+  if(isDealer){
+    _baParty.sendAndRecvMsgs(sendMsgs, recvMsgs,
+                             msgSize, dealerIds, _partyIds);
+    recvMsgs[_myId] = sendMsgs[_myId];
+    recvElms.resize(_nPartiesInc);
+    for(int i=0; i<_nPartiesInc; i++){
+      decodeFieldElt(recvMsgs[i], recvElms[i]);
     }
+  }else{
+    vector<int> readList;
+    _baParty.sendAndRecvMsgs(sendMsgs, recvMsgs,
+                             msgSize, dealerIds, readList);
   }
 
   return;
@@ -810,10 +823,9 @@ template <class FieldType>
 void LinearParty<FieldType>::
 scatterForAll(vector<FieldType>& sendElms,
               vector<FieldType>& recvElms) {
-
-  int nPartiesInc = _parties.size() + 1;
+ 
   vector<int> dealers;
-  for (int i = 0; i < nPartiesInc; i++) {
+  for (int i = 0; i < _nPartiesInc; i++) {
     if (_activeMask[i]) {
       dealers.push_back(i);
     }
@@ -861,8 +873,7 @@ bool LinearParty<FieldType>::
 singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
                   FieldType& checkVal) {
 
-  bool happiness = true;
-  int nPartiesInc = _parties.size() + 1;
+  bool happiness = true; 
 
   // -- every party choose a random secrete
   // FieldType r = _field->Random();
@@ -883,9 +894,8 @@ singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
 
   scatterForAll(sendShares, recvShares); //communication
 
-
   // -- every party applies HIM on received shares
-  vector<FieldType> transformedShares(nPartiesInc);
+  vector<FieldType> transformedShares(_nPartiesInc);
   _M.MatrixMult(recvShares, transformedShares);
 
   // -- every party send transformedShares of T+1 ... n' to
@@ -1184,18 +1194,16 @@ reconstructPrivate(FieldType& share, int degree, int root){
   vector<byte> msg;
   vector< vector<byte> > recvMsgs;
 
-  int msgSize = _field->getElementSizeInBytes();
-  int nPartiesInc = _parties.size() + 1;
-  int nParties  = _parties.size();
+  int msgSize = _field->getElementSizeInBytes();  
   if (_myId == root) {
     // root: receive shares, and decode
-    vector<FieldType> shares(nPartiesInc, _zero);
+    vector<FieldType> shares(_nPartiesInc, _zero);
     shares[_myId] = share;
     
-    recvMsgs.resize(nParties);
+    recvMsgs.resize(_nParties);
     _baParty.gatherMsg(msg, recvMsgs, msgSize, root);
 
-    for (int i = 0; i < nParties; i++) {
+    for (int i = 0; i < _nParties; i++) {
       if (_activeMask[ _parties[i]->getID() ]) {
         decodeFieldElt(recvMsgs[i], shares[ _parties[i]->getID() ]);
       }
@@ -1236,9 +1244,7 @@ template <class FieldType>
 bool LinearParty<FieldType>::
 reconstructPublic(vector<FieldType>& shares,
                   vector<FieldType>& results, int degree){
-
-  int nParties = _parties.size();
-  int nPartiesInc = _parties.size() + 1;
+  
   int msgSize = _field->getElementSizeInBytes();
   int batchSize = shares.size();
 
@@ -1248,13 +1254,13 @@ reconstructPublic(vector<FieldType>& shares,
 
   // -- treat shares as a polynomial
   // -- expand to n points by evaluating at beta
-  vector<FieldType> uSend(nPartiesInc);
-  for (int i = 0; i < nPartiesInc; i++) {
+  vector<FieldType> uSend(_nPartiesInc);
+  for (int i = 0; i < _nPartiesInc; i++) {
     uSend[i] = _eccAlpha.evalPolynomial(_beta[i], shares);
   }
 
   // -- send to corresponding parties (all-to-all)
-  vector<FieldType> uRecv(nPartiesInc);
+  vector<FieldType> uRecv(_nPartiesInc);
   scatterForAll(uSend, uRecv);
 
 
@@ -1268,16 +1274,16 @@ reconstructPublic(vector<FieldType>& shares,
   FieldType f0;
   f0 = _eccAlpha.evalPolynomial(_zero, f);
   vector<byte> sendMsg(msgSize);
-  vector< vector<byte> > recvMsgs(nParties, vector<byte>(msgSize));
+  vector< vector<byte> > recvMsgs(_nParties, vector<byte>(msgSize));
   encodeFieldElt(f0, sendMsg);
 
   _baParty.broadcastMsgForAll(sendMsg, recvMsgs, msgSize);
 
   // -- reconstruct g according to received
   // -- and coefficients are reconstruced values.
-  vector<FieldType> recvF0(nPartiesInc);
+  vector<FieldType> recvF0(_nPartiesInc);
   recvF0[_myId] = f0;
-  for (int i = 0; i < nParties; i++) {
+  for (int i = 0; i < _nParties; i++) {
     if (!_activeMask[ _parties[i]->getID() ]) {
       continue;
     }
@@ -1406,10 +1412,9 @@ evalMultGate(int kingId, FieldType &xShare, FieldType &yShare,
 // -- NOTE: assuming broadcast channel. no need for consensus
 template <class FieldType>
 bool LinearParty<FieldType>::
-faultDetection(bool happiness) {
-  int nParties = _parties.size();
+faultDetection(bool happiness) { 
   // in-active parties's bit is set to true
-  vector<bool> recvBits(nParties, true);
+  vector<bool> recvBits(_nParties, true);
 
   // -- each party sends happiness to all others
   // -- set to unhappy if sees any unhappy
@@ -1448,8 +1453,7 @@ bool LinearParty<FieldType>::
 checkConsistency(int kingId, vector<FieldType> &vals,
                  vector<int>& elimIds) {
   bool happiness = true;
-  int smallTp = (_nActiveParties - _bigT) / 2;
-  int nPartiesInc = _parties.size() +1;
+  int smallTp = (_nActiveParties - _bigT) / 2; 
   int nVerifiers = _bigT + smallTp;
 
   if (vals.size() == 0) {
@@ -1459,8 +1463,8 @@ checkConsistency(int kingId, vector<FieldType> &vals,
   // computational phase
   // -- all parties compute r^1 ... r^{T+t'} using HIM
   vector<FieldType> paddedVals = vals;
-  paddedVals.resize(nPartiesInc, *(_field->GetZero()));
-  vector<FieldType> expandedShares(nPartiesInc);
+  paddedVals.resize(_nPartiesInc, *(_field->GetZero()));
+  vector<FieldType> expandedShares(_nPartiesInc);
   _M.MatrixMult(paddedVals, expandedShares);
   expandedShares.resize(nVerifiers);
 
@@ -1472,7 +1476,7 @@ checkConsistency(int kingId, vector<FieldType> &vals,
 
   if (recvElms.size() > 0) {
     // I'm a verifier
-    for (int i = 0; i < nPartiesInc - 1; i++) {
+    for (int i = 0; i < _nPartiesInc - 1; i++) {
       happiness &= ( recvElms[i] == recvElms[i+1] );
     }
   }
@@ -1492,8 +1496,7 @@ template <class FieldType>
 void LinearParty<FieldType>::
 expandNShareForPartition(int partitionIdx,
                          vector<FieldType>& rShareNp,
-                         vector<FieldType>& rShareT){
-  int nPartiesInc = _parties.size() + 1;
+                         vector<FieldType>& rShareT){ 
   vector<FieldType> fTmp;
   vector<FieldType> alphaTmp(_smallT + 1);
   vector<FieldType> valTmp(_smallT + 1);
@@ -1506,13 +1509,13 @@ expandNShareForPartition(int partitionIdx,
   }
   while (curInterpSize < _smallT + 1) {
     alphaTmp[ curInterpSize ] = // just an arbitrary value
-      _field->GetElement( nPartiesInc + curInterpSize );
+      _field->GetElement( _nPartiesInc + curInterpSize );
     valTmp[ curInterpSize ] = _field->Random();
     curInterpSize++;
   }
   _eccAlpha.interpolate(alphaTmp, valTmp, fTmp);
-  rShareT.resize(nPartiesInc);
-  for (int i = 0; i < nPartiesInc; i++) {
+  rShareT.resize(_nPartiesInc);
+  for (int i = 0; i < _nPartiesInc; i++) {
     rShareT[i] = _eccAlpha.evalPolynomial(_alpha[i], fTmp);
   }
   
@@ -1541,8 +1544,7 @@ extractNShare(vector<FieldType>& rShareT1,
               vector<FieldType>& rShareT2,
               vector<FieldType>& rShareT3,
               vector<FieldType>& rShareNp){
-
-  int nPartiesInc = _parties.size() +1;
+ 
   rShareNp.resize();
   
   for (auto id : _partition[0]) {
@@ -1578,8 +1580,7 @@ eliminateParties(const vector<int> &elimIds) {
 template <class FieldType>
 bool LinearParty<FieldType>::
 generate4Tuples(vector<vector<FieldType>> &rTuples) {
-  bool happiness = true;
-  int nPartiesInc = _parties.size() +1;
+  bool happiness = true; 
   FieldType r = _field->Random();
   rTuples.resize(4);
 
@@ -1589,9 +1590,9 @@ generate4Tuples(vector<vector<FieldType>> &rTuples) {
 
   // -- locally generate the 1_r_t, 2_r_t, 3_r_t shares
   vector<FieldType> f;
-  vector<FieldType> fVals(nPartiesInc);
+  vector<FieldType> fVals(_nPartiesInc);
   randomSecretePoly(r, _nActiveParties-1, f);
-  for (int i = 0; i < nPartiesInc; i++) {
+  for (int i = 0; i < _nPartiesInc; i++) {
     fVals[i] = _eccAlpha.evalPolynomial(_alpha[i], fVals);
   }
   vector<FieldType> fValsT1, fValsT2, fValsT3;
@@ -1599,8 +1600,8 @@ generate4Tuples(vector<vector<FieldType>> &rTuples) {
 
   // -- share the 3 expanded vectors to all
   // -- apply HIM to received shares
-  vector<FieldType> recvSharesT(nPartiesInc);
-  vector< vector<FieldType> > transSharesT(3, vector<FieldType>(nPartiesInc));
+  vector<FieldType> recvSharesT(_nPartiesInc);
+  vector< vector<FieldType> > transSharesT(3, vector<FieldType>(_nPartiesInc));
   scatterForAll(fValsT1, recvSharesT);
   _M.MatrixMult(recvSharesT, transSharesT[0]);
   scatterForAll(fValsT2, recvSharesT);
@@ -1613,7 +1614,7 @@ generate4Tuples(vector<vector<FieldType>> &rTuples) {
   int nVerifiers = _nActiveParties - _bigT;
   vector<int> dealers(nVerifiers);
   lastNActiveParties(nVerifiers, _activeMask, dealers);
-  vector<FieldType> verifySharesT(nPartiesInc);
+  vector<FieldType> verifySharesT(_nPartiesInc);
   vector< vector<FieldType> > toVerifySharesT(3);
   for (int i = 0; i < 3; i++) {
     lastNActiveValues(nVerifiers, _activeMask, transSharesT[0], verifySharesT);
@@ -1827,8 +1828,7 @@ void LinearParty<FieldType>::
 linearInput(vector< vector<FieldType> >& recvInputs,
             int nInputs,  vector<int>& dealerIds) {
 
-  int nDealers = dealerIds.size();
-  int nPartiesInc = _parties.size() + 1;
+  int nDealers = dealerIds.size(); 
   int msgSize = _field->getElementSizeInBytes();
   recvInputs.resize(nDealers);
   sort(dealerIds.begin(), dealerIds.end());
@@ -1858,7 +1858,7 @@ linearInput(vector< vector<FieldType> >& recvInputs,
   }
 
   // -- All dealers batch broadcast its T differences
-  vector< vector<FieldType> > recvOffsets(nPartiesInc);
+  vector< vector<FieldType> > recvOffsets(_nPartiesInc);
   robustBatchBroadcast(sendOffsets, recvOffsets, nInputs, dealerIds);
 
   // -- Each party locally compute input shares
@@ -1877,11 +1877,10 @@ template <class FieldType>
 void LinearParty<FieldType>::
 InputPhase(){
 
-  _wireShares.resize( _circuit.getNrOfGates(), _zero );
-  int nPartiesInc = _parties.size() + 1;
+  _wireShares.resize( _circuit.getNrOfGates(), _zero ); 
   
   // batch share inputs until all inputs are shared
-  vector< vector<FieldType> > receivedInputShares(nPartiesInc);
+  vector< vector<FieldType> > receivedInputShares(_nPartiesInc);
   vector<int> inputParties;
   vector<int> inputsToSend = _inputSizes;
   int minInputs = collectInputIds(inputsToSend, inputParties, _bigT);
@@ -1895,10 +1894,10 @@ InputPhase(){
   cout << "-------- finished input sharing" << endl;
 
   // // batch reconstruct inputs until all inputs are reconstructed
-  // vector< vector<FieldType> > receivedInputsClear(nPartiesInc);
+  // vector< vector<FieldType> > receivedInputsClear(_nPartiesInc);
   // vector<FieldType> reconsShares;
   // vector<FieldType> reconsResults;
-  // for (int i = 0; i < nPartiesInc; i++) {
+  // for (int i = 0; i < _nPartiesInc; i++) {
   //   int nInputs = receivedInputShares[i].size();
   //   receivedInputsClear[i].resize( nInputs );
   //   if (nInputs == 0) {
@@ -1926,7 +1925,7 @@ InputPhase(){
   // plug in shares of  input values
   int nInputGates = _circuit.getNrOfInputGates();
   const vector<TGate> gates = _circuit.getGates();
-  vector<int> offsets(nPartiesInc);
+  vector<int> offsets(_nPartiesInc);
 
   int i=0;
   while (i < nInputGates) {
