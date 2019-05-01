@@ -128,9 +128,15 @@ private:
   void scatterForDealers(vector<FieldType>& sendElms,
                          vector<FieldType>& recvElms,
                          vector<int>& dealerIds);
+  void scatterForDealersMulti(vector<vector<FieldType>>& sendElms,
+                  vector<vector<FieldType>>& recvElms,
+                  vector<int>& dealerIds);
   void gatherForDealers(vector<FieldType>& sendElms,
                         vector<FieldType>& recvElms,
                         vector<int>& dealerIds);
+  void gatherForDealersMulti(vector<vector<FieldType>>& sendElms,
+                 vector<vector<FieldType>>& recvElms,
+                 vector<int>& dealerIds);
   void scatterForAll(vector<FieldType>& sendElms,
                      vector<FieldType>& recvElms);
 
@@ -160,6 +166,17 @@ private:
   // instead of choosing a random to share, each party takes a input to share
   bool singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
                           FieldType& checkVal);
+
+  void singleShareSecreteVerify(FieldType& s, int d, 
+                  vector<FieldType>& sendShares, vector<FieldType>& recvShares, vector<FieldType>& verifyShares, vector<FieldType>& toVerifyShares);
+
+  bool singleShareSecreteVerifyOne(FieldType& s, int d, 
+  vector<FieldType>& claimSendShares, vector<FieldType>& recvShares,
+  vector<FieldType>& claimVerifyShares);
+
+  void partyDispute(int party1, int party2, FieldType& sent, FieldType& received, int msgIdx,
+  vector<vector<FieldType>>& mySend, vector<vector<FieldType>>& myRecv);
+
   // similarly create T random multiple-shares among parties
   bool multipleShareRandom(const vector<int>& degrees,
                            vector< vector<FieldType> >& shares);
@@ -678,6 +695,42 @@ scatterForDealers(vector<FieldType>& sendElms,
 
 template <class FieldType>
 void LinearParty<FieldType>::
+scatterForDealersMulti(vector<vector<FieldType>>& sendElms,
+                  vector<vector<FieldType>>& recvElms,
+                  vector<int>& dealerIds) {
+  int nDealers = dealerIds.size();
+  int nParties = _parties.size();
+  int nPartiesInc = _parties.size() +1;
+  sort(dealerIds.begin(), dealerIds.end());
+  recvElms.resize(nDealers);
+  sendElms.resize(nPartiesInc);
+   
+  int msgSize = _field->getElementSizeInBytes() * sendElms[0].size();
+  vector<byte> recvMsg(msgSize);
+  vector< vector<byte> > sendMsgs(nParties, vector<byte>(msgSize));
+
+  for(int i=0; i<nDealers; i++){
+    int dealerId = dealerIds[i];
+
+    if ( dealerId == _myId) {
+      recvElms[i] = sendElms[_myId];
+      for (int j = 0; j < nParties; j++) {
+        encodeFieldElts(sendElms[ _parties[j]->getID() ], sendMsgs[j]);
+      }
+      _baParty.scatterMsg(sendMsgs, recvMsg, msgSize, dealerId);
+      
+    } else {
+      // receive message and store
+      _baParty.scatterMsg(sendMsgs, recvMsg, msgSize, dealerId);
+      decodeFieldElts(recvMsg, recvElms[i]);
+    }
+  }
+
+  return;
+}
+
+template <class FieldType>
+void LinearParty<FieldType>::
 gatherForDealers(vector<FieldType>& sendElms,
                  vector<FieldType>& recvElms,
                  vector<int>& dealerIds) {
@@ -707,6 +760,44 @@ gatherForDealers(vector<FieldType>& sendElms,
       
     } else {
       encodeFieldElt(sendElms[i], sendMsg);
+      _baParty.gatherMsg(sendMsg, recvMsgs, msgSize, dealerId);
+    }
+  }
+
+  return;
+}
+
+template <class FieldType>
+void LinearParty<FieldType>::
+gatherForDealersMulti(vector<vector<FieldType>>& sendElms,
+                 vector<vector<FieldType>>& recvElms,
+                 vector<int>& dealerIds) {
+  int nDealers = dealerIds.size();
+  int nParties = _parties.size();
+  int nPartiesInc = _parties.size() +1;
+
+  
+  sendElms.resize(nDealers);
+  recvElms.clear(); // <---- non-dealer can check recvElms.size()
+  // <---------------------- to know that they are not dealers
+  
+  int msgSize = _field->getElementSizeInBytes() * sendElms[0].size();
+  vector<byte> sendMsg(msgSize);
+  vector< vector<byte> > recvMsgs;
+  for(int i=0; i<nDealers; i++){
+    int dealerId = dealerIds[i];
+
+    if ( dealerId == _myId) {
+      recvElms.resize(nPartiesInc);
+      recvElms[_myId] = sendElms[i];
+      _baParty.gatherMsg(sendMsg, recvMsgs, msgSize, dealerId);
+      
+      for (int j = 0; j < nParties; j++) {
+        decodeFieldElts(recvMsgs[j], recvElms[ _parties[j]->getID() ]);
+      }
+      
+    } else {
+      encodeFieldElts(sendElms[i], sendMsg);
       _baParty.gatherMsg(sendMsg, recvMsgs, msgSize, dealerId);
     }
   }
@@ -764,6 +855,7 @@ checkPolynomial(vector<FieldType>& y, int degree, vector<FieldType>& g) {
 // -- every party applies HIM on received shares
 // -- every party send transformedShares of T+1 ... n' to crrspnd. parties
 // -- the (n'-T) verifiers verify (n'-T) received shares
+//TODO: Player elimination version
 template <class FieldType>
 bool LinearParty<FieldType>::
 singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
@@ -777,13 +869,20 @@ singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
   FieldType r = s;
   vector<FieldType> f;
   vector<FieldType> sendShares(nPartiesInc);
-  randomSecretePoly(r, d, f);
+
+
+  randomSecretePoly(r, d, f); //Creates Random Bits in F
+
+
   for (int i = 0; i < nPartiesInc; i++) {
     sendShares[i] = _eccAlpha.evalPolynomial(_alpha[i], f);
   }
   // -- and share with all others.
   vector<FieldType> recvShares(nPartiesInc);
-  scatterForAll(sendShares, recvShares);
+
+
+  scatterForAll(sendShares, recvShares); //communication
+
 
   // -- every party applies HIM on received shares
   vector<FieldType> transformedShares(nPartiesInc);
@@ -797,7 +896,10 @@ singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
   vector<FieldType> verifyShares(nVerifiers);
   lastNActiveValues(nVerifiers, _activeMask, transformedShares, verifyShares);
   vector<FieldType> toVerifyShares; // received if I'm a verifier
-  gatherForDealers(verifyShares, toVerifyShares, dealers);
+
+
+  gatherForDealers(verifyShares, toVerifyShares, dealers); //communication
+
 
   // -- the (n'-T) verifiers verify (n'-T) received shares
   checkVal = *(_field->GetZero()); // default value
@@ -811,9 +913,209 @@ singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
     }
   }
 
+  if(!faultDetection(happiness)) { //byzantine unhappy, verify consistency and sharing
+    singleShareSecreteVerify(s, d, sendShares, recvShares, verifyShares, toVerifyShares);
+  }
+
   // -- output the first _bigT shares from active parties
   firstNActiveValues(_bigT, _activeMask, transformedShares, shares);
   return happiness;
+}
+
+template <class FieldType> 
+void LinearParty<FieldType>::
+singleShareSecreteVerify(FieldType& s, int d, 
+                  vector<FieldType>& sendShares, vector<FieldType>& recvShares, 
+                  vector<FieldType>& verifyShares, vector<FieldType>& toVerifyShares) {
+
+  FieldType x; //just some filler args
+  vector<int> judge;
+  firstNActiveParties(1, _activeMask, judge);
+
+  int nVerifiers = _nActiveParties - _bigT;
+  vector<int> dealers(nVerifiers);
+  lastNActiveParties(nVerifiers, _activeMask, dealers);
+
+  vector<FieldType> random1;
+  random1.push_back(s);
+  vector<FieldType> randomElts;
+
+  vector<vector<FieldType>> sendSharesAll;
+  vector<vector<FieldType>> recvSharesAll;
+  vector<vector<FieldType>> verifySharesAll;
+  vector<vector<FieldType>> toVerifySharesAll;
+
+  vector<vector<FieldType>> sendShares1;
+  sendShares1.push_back(sendShares);
+  
+  vector<vector<FieldType>> recvShares1;
+  recvShares1.push_back(recvShares);
+  
+  vector<vector<FieldType>> verifyShares1;
+  vector<FieldType> verifySharesComplete(_parties.size() + 1, *(_field->GetZero()));
+  for(unsigned i = 0; i < dealers.size(); i++) {
+    verifySharesComplete[dealers[i]] = verifyShares[i];
+  }
+  verifyShares1.push_back(verifyShares);
+  
+  vector<vector<FieldType>> toVerifyShares1;
+  toVerifyShares.resize(_parties.size() + 1); //so consistent size with all dealers
+  toVerifyShares1.push_back(toVerifyShares);
+
+  //send to the judge - sendShares, recvShares, verifyShares, toVerifyShares(if dealer)
+  gatherForDealers(random1, randomElts, judge);
+  gatherForDealersMulti(sendShares1, sendSharesAll, judge); //everyone sending their data to judge. 
+  gatherForDealersMulti(recvShares1, recvSharesAll, judge); 
+  gatherForDealersMulti(verifyShares1, verifySharesAll, judge); 
+  gatherForDealersMulti(toVerifyShares1, toVerifySharesAll, judge); 
+  //toVerifyShares may be different sizes for dealers / non dealers
+
+  vector<vector<FieldType>> sent;
+  sent.push_back(sendShares);
+  sent.push_back(verifyShares);
+
+  vector<vector<FieldType>> recv;
+  recv.push_back(recvShares);
+  recv.push_back(toVerifyShares);
+
+  if(_myId == judge[0]) { //I am the judge
+    //checkConsistency
+    for(int i = 0; i < sendShares.size(); i++) {
+      for(int j = 0; j < recvShares.size(); j++) {
+        if(sendSharesAll[i][j] != recvSharesAll[j][i]) {
+          //Dispute!!
+          partyDispute(i,j,sendSharesAll[i][j], recvSharesAll[j][i], 0, sent, recv);
+          return;
+        }
+      }
+    }
+
+    for(int i = 0; i < verifyShares.size(); i++) {
+      for(int j = 0; j < toVerifyShares.size(); j++) {
+        if(verifySharesAll[i][j] != toVerifySharesAll[j][i]) {
+          partyDispute(i,j,verifySharesAll[i][j], toVerifySharesAll[j][i], 1, sent, recv);
+          return;
+        }
+      }
+    }
+    
+    //simulate computation
+    for(int i = 0; i < _parties.size() + 1; i++) {
+      if(_activeMask[i]) {
+        if(!singleShareSecreteVerifyOne(randomElts[i], d, sendSharesAll[i], recvSharesAll[i], verifySharesAll[i])) {
+          partyDispute(_myId, i, x, x, 0, sent, recv);
+        }
+      }
+    }
+
+
+  } else { //listen for disputes
+    partyDispute(0,0,x,x,0, sent, recv);
+  }
+}
+
+
+template <class FieldType>
+bool LinearParty<FieldType>::
+singleShareSecreteVerifyOne(FieldType& s, int d, 
+  vector<FieldType>& claimSendShares, vector<FieldType>& recvShares,
+  vector<FieldType>& claimVerifyShares) {
+  //first check claimed sendShares are on degree d polynomial
+  vector<FieldType> poly;
+  _eccAlpha.interpolate(claimSendShares, poly);
+  if(poly.size() > d + 1) {
+    return false;
+  }
+  //confirm rec generates claimed verify shares.
+
+  vector<FieldType> transformedShares(_parties.size() + 1);
+  _M.MatrixMult(recvShares, transformedShares);
+
+  // -- every party send transformedShares of T+1 ... n' to
+  // -- the corresponding parties
+  int nVerifiers = _nActiveParties - _bigT;
+  vector<int> dealers(nVerifiers);
+  lastNActiveParties(nVerifiers, _activeMask, dealers);
+  vector<FieldType> verifyShares(nVerifiers);
+  lastNActiveValues(nVerifiers, _activeMask, transformedShares, verifyShares);
+  
+  if(verifyShares.size() != claimVerifyShares.size()) {
+    return false;
+  }
+  for(int i = 0; i < verifyShares.size(); i++) {
+    if(verifyShares[i] != claimVerifyShares[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+template <class FieldType>
+void LinearParty<FieldType>::
+partyDispute(int party1, int party2, FieldType& sent, FieldType& received, int msgIdx,
+  vector<vector<FieldType>>& mySend, vector<vector<FieldType>>& myRecv) {
+  vector<int> judge;
+  firstNActiveParties(1, _activeMask, judge);
+
+  //assumes < 255 parties
+  byte party1b = (byte)party1;
+  byte party2b = (byte)party2;
+  byte msgIdxb = (byte)msgIdx;
+  vector<byte> msg = { party1b, party2b, msgIdxb };
+  vector<vector<byte>> msgs(_parties.size(), msg);
+  vector<byte> recMsg;
+
+  _baParty.scatterMsg(msgs, recMsg, 2, judge[0]);
+  vector<FieldType> log;
+  log.push_back(sent);
+  log.push_back(received);
+  vector<vector<FieldType>> msg2(_parties.size() + 1, log);
+  vector<vector<FieldType>> recMsg2;
+  scatterForDealersMulti(msg2, recMsg2, judge);
+
+  party1 = (int)msg[0];
+  party2 = (int)msg[1];
+  msgIdx = (int)msg[2];
+
+  sent = recMsg2[0][0];
+  received = recMsg2[0][1];
+
+  if(party1 == judge[0] || party2 == judge[0]) {
+    vector<int> eliminated;
+    eliminated.push_back(party1);
+    eliminated.push_back(party2);
+    eliminateParties(eliminated);
+  } else {
+    FieldType dispute = *(_field->GetZero()); //lazy, this is just a boolean
+    vector<FieldType> disputeAll;
+    if(_myId == party1) {
+      if(mySend[msgIdx][party2] != sent) {
+        dispute = *(_field->GetOne());
+      }
+    } else if(_myId == party2) {
+      if(myRecv[msgIdx][party1] != received) {
+        dispute = *(_field->GetOne());
+      }
+    }
+    vector<int> conflicters = { party1, party2 };
+    vector<FieldType> disputev(2, dispute);
+    scatterForDealers(disputev, disputeAll, conflicters);
+
+    vector<int> eliminated;
+    if(disputeAll[party1] != *(_field->GetZero())) {
+      eliminated.push_back(judge[0]);
+      eliminated.push_back(party1);
+    } else if (disputeAll[party2] != *(_field->GetZero())) {
+      eliminated.push_back(judge[0]);
+      eliminated.push_back(party2);
+    } else {
+      eliminated.push_back(party1);
+      eliminated.push_back(party2);
+    }
+
+    eliminateParties(eliminated);
+  }
 }
 
 // choose a random secrete, and run singleShareSecrete
@@ -821,8 +1123,13 @@ template <class FieldType>
 bool LinearParty<FieldType>::
 singleShareRandom(int d, vector<FieldType>& shares, FieldType& checkVal) {
   bool happiness = true;
-  FieldType r = _field->Random();
-  return singleShareSecrete(r, d, shares, checkVal);
+  FieldType r;
+  
+  do {
+    r = _field->Random();
+  } while(!singleShareSecrete(r, d, shares, checkVal)); //if false, then parties eliminated. Rerun
+
+  return true;
 }
 
 // similarly create T random multiple-shares among parties
