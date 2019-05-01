@@ -909,7 +909,7 @@ sendAndRecvMsgs(vector< vector<byte> >& sendMsgs,
                 const vector<int>& writeList,
                 const vector<int>& readList){
   // a mask w/ 0 <=> do nothing; 1 <=> read; 2 <=> write; 3 <=> both;
-  vector<char> opMask(_partySocket.size(), 0); 
+  vector<char> opMask(_partySocket.size()+1, 0); 
   for(auto id : readList){
     opMask[id] += 1;
   }
