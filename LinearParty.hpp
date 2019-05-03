@@ -879,17 +879,17 @@ singleShareSecrete(FieldType& s, int d, vector<FieldType>& shares,
   // FieldType r = _field->Random();
   FieldType r = s;
   vector<FieldType> f;
-  vector<FieldType> sendShares(nPartiesInc);
+  vector<FieldType> sendShares(_nPartiesInc);
 
 
   randomSecretePoly(r, d, f); //Creates Random Bits in F
 
 
-  for (int i = 0; i < nPartiesInc; i++) {
+  for (int i = 0; i < _nPartiesInc; i++) {
     sendShares[i] = _eccAlpha.evalPolynomial(_alpha[i], f);
   }
   // -- and share with all others.
-  vector<FieldType> recvShares(nPartiesInc);
+  vector<FieldType> recvShares(_nPartiesInc);
 
 
   scatterForAll(sendShares, recvShares); //communication
