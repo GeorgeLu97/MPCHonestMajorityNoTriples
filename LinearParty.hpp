@@ -133,11 +133,16 @@ private:
   void scatterForDealers(vector<FieldType>& sendElms,
                          vector<FieldType>& recvElms,
                          vector<int>& dealerIds);
+  void scatterForDealersMulti(vector<vector<FieldType>>& sendElms,
+                              vector<vector<FieldType>>& recvElms,
+                              vector<int>& dealerIds);
   void gatherForDealers(vector<FieldType>& sendElms,
                         vector<FieldType>& recvElms,
                         vector<int>& dealerIds);
   void scatterForAll(vector<FieldType>& sendElms,
                      vector<FieldType>& recvElms);
+  void scatterForAllMulti(vector<vector<FieldType>>& sendElms,
+                          vector<vector<FieldType>>& recvElms);
 
   // ---- initialization funtions ----
   void makeField();
@@ -652,6 +657,44 @@ randomSecretePoly(FieldType &s, int degree,
 
 template <class FieldType>
 void LinearParty<FieldType>::
+scatterForDealersMulti(vector<vector<FieldType>>& sendElms,
+                       vector<vector<FieldType>>& recvElms,
+                       vector<int>& dealerIds) {
+
+  int nDealers = dealerIds.size();  
+  sort(dealerIds.begin(), dealerIds.end());
+  recvElms.resize(nDealers);
+  sendElms.resize(_nPartiesInc);
+  int msgSize = _field->getElementSizeInBytes();
+  bool isDealer = false;
+  for(auto dealerId : dealerIds){
+    isDealer |= (dealerId == _myId);
+  }
+
+  vector<vector<byte>> sendMsgs(_nPartiesInc);
+  vector<vector<byte>> recvMsgs(_nPartiesInc);
+  if(isDealer){
+    for(int i=0; i<_nPartiesInc; i++){
+      encodeFieldElts(sendElms[i], sendMsgs[i]);
+    }
+    _baParty.sendAndRecvMsgs(sendMsgs, recvMsgs,
+                             msgSize, _partyIds, dealerIds);
+    recvMsgs[_myId] = sendMsgs[_myId];
+  }else{
+    vector<int> writeList;
+    _baParty.sendAndRecvMsgs(sendMsgs, recvMsgs,
+                             msgSize, writeList, dealerIds);
+  }
+
+  for(int i=0; i<nDealers; i++){
+    int dealerId = dealerIds[i];
+    decodeFieldElts(recvMsgs[ dealerId ], recvElms[i]);
+  }
+  return;
+}
+
+template <class FieldType>
+void LinearParty<FieldType>::
 scatterForDealers(vector<FieldType>& sendElms,
                   vector<FieldType>& recvElms,
                   vector<int>& dealerIds) {
@@ -743,6 +786,23 @@ scatterForAll(vector<FieldType>& sendElms,
   scatterForDealers(sendElms, recvElms, dealers);
   return;
 }
+
+template <class FieldType>
+void LinearParty<FieldType>::
+scatterForAllMulti(vector<vector<FieldType>>& sendElms,
+                   vector<vector<FieldType>>& recvElms) {
+ 
+  vector<int> dealers;
+  for (int i = 0; i < _nPartiesInc; i++) {
+    if (_activeMask[i]) {
+      dealers.push_back(i);
+    }
+  }
+
+  scatterForDealersMulti(sendElms, recvElms, dealers);
+  return;
+}
+
 
 template <class FieldType>
 bool LinearParty<FieldType>::
@@ -1270,6 +1330,28 @@ eliminateParties(const vector<int> &elimIds) {
   return;
 }
 
+template <class FieldType>
+static inline vector<vector<FieldType>>
+transposeVectors(vector<vector<FieldType>>& m){
+  int nRows = m.size();
+  if(nRows == 0){
+    return;
+  }
+  int nCols = m[0].size();
+  if(nCols == 0){
+    return;
+  }
+  
+  vector<vector<FieldType>> mt(nCols, vector<FieldType>(nRows));
+  for(int i = 0; i<nRows; i++){
+    for(int j = 0; j<nCols; j++){
+      mt[j][i] = m[i][j];
+    }
+  }
+  return mt;
+}
+
+
 // generate _bigT random 4-consistent tuples or return false
 // Called QuadrupleShareRandom in the new paper
 template <class FieldType>
@@ -1290,19 +1372,20 @@ generate4Tuples(vector<vector<FieldType>> &rTuples) {
   for (int i = 0; i < _nPartiesInc; i++) {
     fVals[i] = _eccAlpha.evalPolynomial(_alpha[i], fVals);
   }
-  vector<FieldType> fValsT1, fValsT2, fValsT3;
-  expandNShare(fVals, fValsT1, fValsT2, fValsT3);
+
+  vector<FieldType> fValsT(3); // , fValsT2, fValsT3;
+  expandNShare(fVals, fValsT[0], fValsT[1], fValsT[2]);
 
   // -- share the 3 expanded vectors to all
+  vector<vector<FieldType>> sendSharesT = transposeVectors(fValsT);
+  vector<vector<FieldType>> recvSharesT;
+  scatterForAllMulti(sendSharesT, recvSharesT);
+  
   // -- apply HIM to received shares
-  vector<FieldType> recvSharesT(_nPartiesInc);
   vector< vector<FieldType> > transSharesT(3, vector<FieldType>(_nPartiesInc));
-  scatterForAll(fValsT1, recvSharesT);
-  _M.MatrixMult(recvSharesT, transSharesT[0]);
-  scatterForAll(fValsT2, recvSharesT);
-  _M.MatrixMult(recvSharesT, transSharesT[1]);
-  scatterForAll(fValsT3, recvSharesT);
-  _M.MatrixMult(recvSharesT, transSharesT[2]);
+  for(int i=0; i<3; i++){
+    _M.MatrixMult(recvSharesT[i], transSharesT[i]);
+  }
 
   // -- every party send transformedShares of T+1 ... n' to
   // -- the corresponding parties
