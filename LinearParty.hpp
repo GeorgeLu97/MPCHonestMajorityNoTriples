@@ -1117,7 +1117,8 @@ faultDetection(bool happiness) {
     happiness &= b;
   }
   // -- all parties run consensus on happiness
-  happiness =_baParty.consensus(happiness);
+  // NOTE: assuming broadcast, don't need to run consensus anymore.
+  // happiness =_baParty.consensus(happiness);
   return happiness;
 }
 
