@@ -1333,16 +1333,17 @@ eliminateParties(const vector<int> &elimIds) {
 template <class FieldType>
 static inline vector<vector<FieldType>>
 transposeVectors(vector<vector<FieldType>>& m){
+  vector<vector<FieldType>> mt;
   int nRows = m.size();
   if(nRows == 0){
-    return;
+    return mt;
   }
   int nCols = m[0].size();
   if(nCols == 0){
-    return;
+    return mt;
   }
   
-  vector<vector<FieldType>> mt(nCols, vector<FieldType>(nRows));
+  mt.resize(nCols, vector<FieldType>(nRows));
   for(int i = 0; i<nRows; i++){
     for(int j = 0; j<nCols; j++){
       mt[j][i] = m[i][j];

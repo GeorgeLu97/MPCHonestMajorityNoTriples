@@ -456,7 +456,7 @@ reconstruct(vector<FieldType>& alpha, // input x of size n
   int nMessages = degree+1; // k
   int nCodes = code.size(); // n
   vector<FieldType> g1;
-  interpolate(code, g1);
+  interpolate(alpha, code, g1);
 
   // minDeg = ceil( (n + k)/2 )
   int minDeg = (nCodes + nMessages +1)/2;
