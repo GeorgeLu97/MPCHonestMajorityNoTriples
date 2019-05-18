@@ -273,14 +273,14 @@ exchangeBit(bool sendBit, vector<bool>& recvBits){
   
   vector<thread> threads(_nThread-1);
   for(int i=1; i<_nThread; i++){
-    threads[i] = thread(&BAParty::exchangeBitWorker, this,
+    threads[i-1] = thread(&BAParty::exchangeBitWorker, this,
                         sendBit, ref(recvBits), i, _nThread);
   }
 
   exchangeBitWorker(sendBit, recvBits, 0, _nThread);
 
   for(int i=1; i<_nThread; i++){
-    threads[i].join();
+    threads[i-1].join();
   }
   return;
 }
@@ -361,14 +361,14 @@ spreadBit(bool sendBit, int kingId){
     // king: send to everyone
     vector<thread> threads(_nThread-1);
     for(int i=1; i<_nThread; i++){
-      threads[i] = thread(&BAParty::spreadBitWorker, this,
+      threads[i-1] = thread(&BAParty::spreadBitWorker, this,
                           sendBit, i, _nThread);
     }
 
     spreadBitWorker(sendBit, 0, _nThread);
 
     for(int i=1; i<_nThread; i++){
-      threads[i].join();
+      threads[i-1].join();
     }
     return sendBit;
   }else{
@@ -410,14 +410,14 @@ commiteeSendBit(const vector<char>& commitee_mask, const int* QCount,
   //  printActiveParties();
   vector<thread> threads(_nThread-1);
   for(int i=1; i<_nThread; i++){
-    threads[i] = thread(&BAParty::spreadBitWorker, this,
+    threads[i-1] = thread(&BAParty::spreadBitWorker, this,
                         sendBit, i, _nThread);
   }
 
   spreadBitWorker(sendBit, 0, _nThread);
   
   for(int i=1; i<_nThread; i++){
-    threads[i].join();
+    threads[i-1].join();
   }
   unmapCommitee(commitee_mask, QCount, 1-myCommitee);
   return;
@@ -434,14 +434,14 @@ commiteeRecvBits(const vector<char>& commitee_mask, const int* QCount,
   mapCommitee(commitee_mask, QCount, 1-myCommitee);
   vector<thread> threads(_nThread-1);
   for(int i=1; i<_nThread; i++){
-    threads[i] = thread(&BAParty::gatherBitWorker, this,
+    threads[i-1] = thread(&BAParty::gatherBitWorker, this,
                         ref(buffer), i, _nThread);
   }
 
   gatherBitWorker(buffer, 0, _nThread);
   
   for(int i=1; i<_nThread; i++){
-    threads[i].join();
+    threads[i-1].join();
   }
   unmapCommitee(commitee_mask, QCount, 1-myCommitee);
   return;
@@ -730,14 +730,14 @@ broadcastMsgForAll(vector<byte>& sendMsg, // input
   recvMsgs.clear();
   recvMsgs.resize(_partySocket.size(), vector<byte>(msgSize));
   for(int i=1; i<_nThread; i++){
-    threads[i] = thread(&BAParty::exchangeMsgWorker, this,
+    threads[i-1] = thread(&BAParty::exchangeMsgWorker, this,
                         ref(sendMsg), ref(recvMsgs), msgSize, i, _nThread);
   }
 
   exchangeMsgWorker(sendMsg, recvMsgs, msgSize, 0, _nThread);
 
   for(int i=1; i<_nThread; i++){
-    threads[i].join();
+    threads[i-1].join();
   }
   return;
 }
@@ -762,14 +762,14 @@ spreadMsg(vector<byte>& msg, int msgSize, int rootId){
     msg.resize(msgSize);
     vector<thread> threads(_nThread-1);
     for (int i = 1; i < _nThread; i++) {
-      threads[i] = thread(&BAParty::spreadMsgWorker, this,
+      threads[i-1] = thread(&BAParty::spreadMsgWorker, this,
                           ref(msg), i, _nThread);
     }
 
     spreadMsgWorker(msg, 0, _nThread);
     
     for(int i=1; i<_nThread; i++){
-      threads[i].join();
+      threads[i-1].join();
     }
     
   } else {
@@ -798,14 +798,14 @@ scatterMsg(vector< vector<byte> >& sendMsgs,
     sendMsgs.resize(nParties);
     vector<thread> threads(_nThread-1);
     for (int i = 1; i < _nThread; i++) {
-      threads[i] = thread(&BAParty::scatterMsgWorker, this,
+      threads[i-1] = thread(&BAParty::scatterMsgWorker, this,
                           ref(sendMsgs), msgSize, i, _nThread);
     }
 
     scatterMsgWorker(sendMsgs, msgSize, 0, _nThread);
     
     for (int i = 1; i < _nThread; i++) {
-      threads[i].join();
+      threads[i-1].join();
     }
 
   } else {
@@ -855,14 +855,14 @@ gatherMsg(vector<byte>& sendMsg, vector< vector<byte> >& recvMsgs,
     recvMsgs.resize(nParties, vector<byte>(msgSize));
     vector<thread> threads(_nThread-1);
     for(int i=1; i<_nThread; i++){
-      threads[i] = thread(&BAParty::gatherMsgWorker, this,
+      threads[i-1] = thread(&BAParty::gatherMsgWorker, this,
                           ref(recvMsgs), msgSize, i, _nThread);
     }
 
     gatherMsgWorker(recvMsgs, msgSize, 0, _nThread);
     
     for(int i=1; i<_nThread; i++){
-      threads[i].join();
+      threads[i-1].join();
     }
     
   }else{
@@ -940,14 +940,14 @@ sendAndRecvMsgs(vector< vector<byte> >& sendMsgs,
   // myself is also a thread 
   vector<thread> threads(_nThread-1);
   for(int i=1; i<_nThread; i++){
-    threads[i] = thread(&BAParty::sendAndRecvMsgsWorker, this,
+    threads[i-1] = thread(&BAParty::sendAndRecvMsgsWorker, this,
                         ref(sendMsgs), ref(recvMsgs),
                         msgSize, i, _nThread, ref(opMask));
   }
   sendAndRecvMsgsWorker( sendMsgs, recvMsgs, msgSize,
                          0, _nThread, opMask);
   for(int i=1; i<_nThread; i++){
-    threads[i].join();
+    threads[i-1].join();
   }
   return;
 }
