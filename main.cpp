@@ -9,81 +9,74 @@
 #include <stdio.h>
 #include <x86intrin.h>
 
-
 template <class FieldType>
-void testReconstruct(const vector<int>& poly,
-                     const vector<int>& alpha,
-                     vector<int>& re_poly){
+void testReconstruct(const vector<int>& poly, const vector<int>& alpha,
+                     vector<int>& re_poly)
+{
+    ECC<FieldType> ecc;
+    int nCoeff = poly.size();
+    int nPoints = alpha.size();
+    vector<FieldType> fieldPoly(nCoeff, FieldType());
+    vector<FieldType> fieldX(nPoints, FieldType());
+    vector<FieldType> fieldY(nPoints, FieldType());
+    vector<FieldType> result;
 
-  ECC<FieldType> ecc;
-  int nCoeff = poly.size();
-  int nPoints = alpha.size();
-  vector<FieldType> fieldPoly(nCoeff, FieldType());
-  vector<FieldType> fieldX(nPoints, FieldType());
-  vector<FieldType> fieldY(nPoints, FieldType());
-  vector<FieldType> result;
+    // build polynomial
+    for (int i = 0; i < nCoeff; i++) {
+        fieldPoly[i] = FieldType(poly[i]);
+    }
 
-  // build polynomial
-  for(int i=0; i<nCoeff; i++){
-    fieldPoly[i]= FieldType( poly[i] );
-  }
+    // build sample points
+    for (int i = 0; i < nPoints; i++) {
+        fieldX[i] = FieldType(alpha[i]);
+        fieldY[i] = ecc.evalPolynomial(fieldX[i], fieldPoly);
+    }
 
-  // build sample points
-  for(int i=0; i<nPoints; i++){
-    fieldX[i] = FieldType( alpha[i] );
-    fieldY[i] = ecc.evalPolynomial( fieldX[i], fieldPoly );
-    
-  }
-  
-  ecc.setAlpha(fieldX);
-  
-  // output to check
-  cout << "evaluation result:" << endl;
-  for(int i=0; i<nPoints; i++){
-    cout << "(" << fieldX[i] << " " << fieldY[i] << ") ";
-  }
-  cout << endl;
+    ecc.setAlpha(fieldX);
 
-  // corrupt (11 - 5) / 2 = 3 points
-  fieldY[1] = FieldType(0) - fieldY[2];
-  fieldY[10] = FieldType(1) - fieldY[3];
-  fieldY[5] = fieldY[0] - fieldY[4];
+    // output to check
+    cout << "evaluation result:" << endl;
+    for (int i = 0; i < nPoints; i++) {
+        cout << "(" << fieldX[i] << " " << fieldY[i] << ") ";
+    }
+    cout << endl;
 
-  // try reconstruction
-  ecc.reconstruct(fieldY, nCoeff-1, result);
-  
-  cout << "evaluation after reconstruction:" << endl;
-  for(int i=0; i<nPoints; i++){
-    cout << "(" << fieldX[i] << " "
-         << ecc.evalPolynomial( fieldX[i], result ) << ") ";
-  }
-  cout << endl;
-  
-  return;
+    // corrupt (11 - 5) / 2 = 3 points
+    fieldY[1] = FieldType(0) - fieldY[2];
+    fieldY[10] = FieldType(1) - fieldY[3];
+    fieldY[5] = fieldY[0] - fieldY[4];
+
+    // try reconstruction
+    ecc.reconstruct(fieldY, nCoeff - 1, result);
+
+    cout << "evaluation after reconstruction:" << endl;
+    for (int i = 0; i < nPoints; i++) {
+        cout << "(" << fieldX[i] << " " << ecc.evalPolynomial(fieldX[i], result)
+             << ") ";
+    }
+    cout << endl;
+
+    return;
 }
-
 
 int main(int argc, char* argv[])
 {
-
     CmdParser parser;
     auto parameters = parser.parseArguments("", argc, argv);
     int times =
-      stoi(parser.getValueByKey(parameters, "internalIterationsNumber"));
-
+        stoi(parser.getValueByKey(parameters, "internalIterationsNumber"));
 
     string fieldType = parser.getValueByKey(parameters, "fieldType");
-    cout<<"fieldType = "<<fieldType<<endl;
+    cout << "fieldType = " << fieldType << endl;
 
-    int polynomial[] = {4, 1, 2, 3, 5}; // size = 5
-    int alpha[] = {1, 4, 9, 20, 5, 8, 6, 3, 7, 2, 13}; // size = 11
-    
+    int polynomial[] = {4, 1, 2, 3, 5};                 // size = 5
+    int alpha[] = {1, 4, 9, 20, 5, 8, 6, 3, 7, 2, 13};  // size = 11
+
     vector<int> result;
-    vector<int> poly(polynomial, polynomial+5);
-    vector<int> alph(alpha, alpha+11);
+    vector<int> poly(polynomial, polynomial + 5);
+    vector<int> alph(alpha, alpha + 11);
 
-    if(fieldType.compare("ZpMersenne31") == 0)
-      {
+    if (fieldType.compare("ZpMersenne31") == 0) {
         // testReconstruct<ZpMersenneIntElement>(poly, alph, result);
         // ProtocolParty<ZpMersenneIntElement> protocol(argc, argv);
         // auto t1 = high_resolution_clock::now();
@@ -99,31 +92,23 @@ int main(int argc, char* argv[])
         protocol.run();
         cout << "---- protocol finished ----" << endl;
         exit(0);
-      }
-    else if(fieldType.compare("ZpMersenne61") == 0)
-      {
+    } else if (fieldType.compare("ZpMersenne61") == 0) {
         // testReconstruct<ZpMersenneLongElement>(poly, alph, result);
         LinearParty<ZpMersenneLongElement> protocol(argc, argv);
         protocol.run();
-      }
-    else if(fieldType.compare("ZpKaratsuba") == 0)
-      {
+    } else if (fieldType.compare("ZpKaratsuba") == 0) {
         // testReconstruct<ZpKaratsubaElement>(poly, alph, result);
         LinearParty<ZpKaratsubaElement> protocol(argc, argv);
         protocol.run();
-      }
-    else if(fieldType.compare("GF2m") == 0)
-      {
+    } else if (fieldType.compare("GF2m") == 0) {
         // testReconstruct<GF2E>(poly, alph, result);
         LinearParty<GF2E> protocol(argc, argv);
         protocol.run();
-      }
-    else if(fieldType.compare("Zp") == 0)
-      {
+    } else if (fieldType.compare("Zp") == 0) {
         // testReconstruct<ZZ_p>(poly, alph, result);
         LinearParty<ZZ_p> protocol(argc, argv);
         protocol.run();
-      }
+    }
 
     return 0;
 }
