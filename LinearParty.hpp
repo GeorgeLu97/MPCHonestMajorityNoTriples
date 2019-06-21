@@ -353,6 +353,18 @@ void LinearParty<FieldType>::makeParties()
     _parties = comm.setCommunication(io_service, _myId, _nActiveParties,
                                      getArg("partiesFile"));
 
+    string tmp = "init times";
+    //cout<<"before sending any data"<<endl;
+    byte tmpBytes[20];
+    for (int i = 0; i < _parties.size(); i++){
+        if (_parties[i]->getID() < _myId){
+            _parties[i]->getChannel()->write(tmp);
+            _parties[i]->getChannel()->read(tmpBytes, tmp.size());
+        } else {
+            _parties[i]->getChannel()->read(tmpBytes, tmp.size());
+            _parties[i]->getChannel()->write(tmp);
+        }
+    }
     _activeMask.clear();
     _activeMask.resize(_nActiveParties, true);
 
