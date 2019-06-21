@@ -52,6 +52,9 @@ private:
     int _bigT;
     int _smallT;
     int _nThread;
+
+    Measurement* _timer;
+
     ArithmeticCircuit _circuit;
     TemplateField<FieldType>* _field;
     FieldType _zero;
@@ -418,6 +421,12 @@ LinearParty<FieldType>::LinearParty(int argc, char* argv[])
     _smallT = (_nActiveParties - 1) / 3;
     _bigT = _nActiveParties - 2 * _smallT;
 
+
+    vector<string> subTaskNames{"run", "runOnline", "runOffline",
+                                "InputPhase", "EvalPhase", "OutputPhase",
+                                "offlineInput", "offlineOutput"};
+    _timer = new Measurement(*this, subTaskNames);
+
     makeField();
     makeParties();
     makeAlpha();
@@ -449,15 +458,12 @@ LinearParty<FieldType>::LinearParty(int argc, char* argv[])
 }
 
 template <class FieldType>
-LinearParty<FieldType>::~LinearParty()
-{
-    delete _field;
-}
-
-template <class FieldType>
 void LinearParty<FieldType>::run()
 {
+    _timer->startSubTask("run", 0);
     auto start = high_resolution_clock::now();
+
+    cerr << "Start run for party " << _myId << "!!" << endl;
 
     runOffline();
     runOnline();
@@ -465,9 +471,10 @@ void LinearParty<FieldType>::run()
     auto end = high_resolution_clock::now();
     auto duration = duration_cast<milliseconds>(end - start).count();
 
-    cout << "time in milliseconds: " << duration << endl;
+    cout << "party " << _myId << " time in milliseconds: "
+         << duration << endl;
 
-    return;
+    _timer->endSubTask("run", 0);
 }
 
 template <class FieldType>
@@ -1592,8 +1599,6 @@ void LinearParty<FieldType>::linearInput(vector<vector<FieldType> >& recvInputs,
             recvInputs[i][j] += recvOffsets[i][j];
         }
     }
-
-    return;
 }
 
 // runs linearInput() repeatedly until all inputs are shared.
@@ -1601,6 +1606,8 @@ void LinearParty<FieldType>::linearInput(vector<vector<FieldType> >& recvInputs,
 template <class FieldType>
 void LinearParty<FieldType>::InputPhase()
 {
+    _timer->startSubTask("InputPhase", 0);
+
     _wireShares.resize(_circuit.getNrOfGates(), _zero);
 
     // batch share inputs until all inputs are shared
@@ -1660,8 +1667,10 @@ void LinearParty<FieldType>::InputPhase()
             i++;
         }
     }
+
     cout << "---- finished Input Phase ----" << endl;
-    return;
+
+    _timer->endSubTask("InputPhase", 0);
 }
 
 // evaluate circuits
@@ -1670,6 +1679,8 @@ void LinearParty<FieldType>::InputPhase()
 template <class FieldType>
 void LinearParty<FieldType>::EvalPhase()
 {
+    _timer->startSubTask("EvalPhase", 0);
+
     const vector<TGate> gates = _circuit.getGates();
     // TODO: should also subtract random gates here?
     int nTotalGates = _circuit.getNrOfGates();
@@ -1702,6 +1713,8 @@ void LinearParty<FieldType>::EvalPhase()
         }
     }
 
+    _timer->endSubTask("EvalPhase", 0);
+
     cout << "---- finished Eval Phase ----" << endl;
 }
 
@@ -1709,6 +1722,8 @@ void LinearParty<FieldType>::EvalPhase()
 template <class FieldType>
 void LinearParty<FieldType>::OutputPhase()
 {
+    _timer->startSubTask("OutputPhase", 0);
+
     int nOutputGates = _circuit.getNrOfOutputGates();
     const vector<TGate> gates = _circuit.getGates();
 
@@ -1728,7 +1743,8 @@ void LinearParty<FieldType>::OutputPhase()
     }
 
     cout << "---- finished Output Phase ----" << endl;
-    return;
+
+    _timer->endSubTask("OutputPhase", 0);
 }
 
 // runs preparation phase:
@@ -1738,7 +1754,11 @@ void LinearParty<FieldType>::OutputPhase()
 template <class FieldType>
 void LinearParty<FieldType>::runOffline()
 {
+    _timer->startSubTask("runOffline", 0);
+
     // -- generate random t-shares for input and random gates
+    _timer->startSubTask("offlineInput", 0);
+
     int nSingleShares =
         _circuit.getNrOfInputGates() + _circuit.getNrOfRandomGates();
     int nBatches = (nSingleShares + _bigT - 1) / _bigT;
@@ -1756,7 +1776,10 @@ void LinearParty<FieldType>::runOffline()
         }
     }
 
+    _timer->endSubTask("offlineInput", 0);
+
     // -- generate (random) zero t-shares for output gates
+    _timer->startSubTask("offlineOutput", 0);
     int nSingleZeroShares = _circuit.getNrOfOutputGates();
     nBatches = (nSingleZeroShares + _bigT - 1) / _bigT;
 
@@ -1771,8 +1794,11 @@ void LinearParty<FieldType>::runOffline()
         }
     }
 
+    _timer->endSubTask("offlineOutput", 0);
+
     cout << "---- finished offline phase ----" << endl;
-    return;
+
+    _timer->endSubTask("runOffline", 0);
 }
 
 // runs =main()= protocol
@@ -1782,10 +1808,19 @@ void LinearParty<FieldType>::runOffline()
 template <class FieldType>
 void LinearParty<FieldType>::runOnline()
 {
+    _timer->startSubTask("runOnline", 0);
     InputPhase();
     EvalPhase();
     OutputPhase();
-    return;
+    _timer->endSubTask("runOnline", 0);
+}
+
+template <class FieldType>
+LinearParty<FieldType>::~LinearParty()
+{
+    delete _field;
+    delete _timer;
+    exit(0);
 }
 
 #endif /* LINEARPARTY_H_ */

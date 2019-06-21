@@ -91,7 +91,6 @@ int main(int argc, char* argv[])
         LinearParty<ZpMersenneIntElement> protocol(argc, argv);
         protocol.run();
         cout << "---- protocol finished ----" << endl;
-        exit(0);
     } else if (fieldType.compare("ZpMersenne61") == 0) {
         // testReconstruct<ZpMersenneLongElement>(poly, alph, result);
         LinearParty<ZpMersenneLongElement> protocol(argc, argv);
