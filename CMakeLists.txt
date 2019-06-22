@@ -12,7 +12,8 @@ set(SOURCE_FILES main.cpp
         ProtocolParty.cpp ProtocolParty.h ProtocolTimer.cpp ProtocolTimer.h
         BAParty.cpp BAParty.h ECC.cpp ECC.h LinearParty.hpp LinearParty.cpp
         ZpKaratsubaElement.cpp ZpKaratsubaElement.h
-        HashEncrypt.cpp HashEncrypt.h HashAbstract.h TemplateField.cpp)
+        HashEncrypt.cpp HashEncrypt.h HashAbstract.h TemplateField.cpp
+        Timer.cpp Timer.h)
 
 
 link_directories(/usr/ssl/lib/ $ENV{HOME}/libscapi/install/lib )
